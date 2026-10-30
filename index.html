@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Antojo - Busca por plato</title>
+<meta name="description" content="Antojo: busca restaurantes por plato, precio, distancia y valoración. Piloto Dublín.">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header>
+  <h1>🫐 Antojo</h1>
+  <p class="tag">Busca por plato: el mejor ramen cerca de ti, no solo el restaurante.</p>
+</header>
+
+<div class="banner">
+  Demo funcional del piloto Dublín. Restaurantes reales (Yelp, oct 2026);
+  los precios de platos son de muestra y están pendientes de verificación.
+</div>
+
+<main>
+  <section class="controls">
+    <input id="q" type="search" placeholder="¿Qué se te antoja? Ej.: ramen, hamburguesa, pancakes…" autocomplete="off">
+    <div class="row">
+      <div class="chips">
+        <button class="chip on" data-cat="todo">Todo</button>
+        <button class="chip" data-cat="hamburguesas">🍔 Hamburguesas</button>
+        <button class="chip" data-cat="ramen">🍜 Ramen</button>
+        <button class="chip" data-cat="brunch">🥞 Brunch</button>
+      </div>
+      <select id="sort" aria-label="Ordenar por">
+        <option value="distancia">Más cerca</option>
+        <option value="precio">Más barato</option>
+        <option value="valoracion">Mejor valorado</option>
+      </select>
+      <button id="geo">📍 Usar mi ubicación</button>
+    </div>
+  </section>
+
+  <div id="map"></div>
+
+  <p id="count" class="count"></p>
+  <section id="results"></section>
+</main>
+
+<footer>
+  <p>Antojo · piloto Dublín · base: <a href="https://github.com/lightsaber-design/restaurant">lightsaber-design/restaurant</a></p>
+  <p>Mapa © OpenStreetMap contributors · Valoraciones: Yelp · Cada precio verificado llevará su fecha (regla de 90 días).</p>
+</footer>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

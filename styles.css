@@ -23,6 +23,10 @@ select, #geo { border: 1px solid #ddd2c2; background: #fff; border-radius: 10px;
 .price { color: #1d7a3d; font-weight: 700; margin-left: 4px; }
 .venue { color: #6b6257; font-size: .88rem; margin-top: 4px; }
 .meta { display: flex; gap: 12px; margin-top: 8px; font-size: .86rem; }
-.sample { margin-top: 8px; font-size: .72rem; color: #a08540; }
+.verify { margin-top: 8px; font-size: .72rem; }
+.verify.ok { color: #2f7d4f; }
+.verify.ok a { color: #2f7d4f; }
+.verify.no { color: #a08540; }
+.price.none { font-size: .78rem; color: #a08540; font-weight: 400; }
 footer { padding: 18px 16px 30px; color: #8a8072; font-size: .8rem; max-width: 860px; margin: 0 auto; }
 footer a { color: inherit; }

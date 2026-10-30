@@ -21,6 +21,29 @@
   function fmtKm(km) { return km < 1 ? Math.round(km * 1000) + " m" : km.toFixed(1) + " km"; }
   function fmtEur(n) { return "€" + n.toFixed(2); }
 
+  var MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+  function fmtFecha(iso) {
+    var p = iso.split("-");
+    return parseInt(p[2], 10) + " " + MESES[parseInt(p[1], 10) - 1] + " " + p[0];
+  }
+  var CANALES = {
+    carta: "carta oficial del restaurante",
+    pdf: "carta oficial (PDF)",
+    toast: "pedido online oficial (recogida)",
+    web: "web oficial (pedidos)"
+  };
+  function esc(t) {
+    return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function verifLine(d) {
+    if (d.price == null) {
+      return '<div class="verify no">sin precio verificado · pendiente de investigación</div>';
+    }
+    var canal = CANALES[d.ch] || "fuente oficial";
+    return '<div class="verify ok">✓ verificado ' + fmtFecha(d.chk) + ' · ' + canal +
+      ' · <a href="' + esc(d.src) + '" target="_blank" rel="noopener">fuente</a></div>';
+  }
+
   function flatDishes() {
     var out = [];
     VENUES.forEach(function (v) {
@@ -35,8 +58,13 @@
         return norm(x.dish.name).indexOf(q) >= 0 || norm(x.venue.name).indexOf(q) >= 0;
       });
     }
-    if (sortBy === "precio") out.sort(function (a, b) { return a.dish.price - b.dish.price; });
-    else if (sortBy === "valoracion") out.sort(function (a, b) { return b.venue.rating - a.venue.rating; });
+    if (sortBy === "precio") out.sort(function (a, b) {
+      if (a.dish.price == null && b.dish.price == null) return a.km - b.km;
+      if (a.dish.price == null) return 1;
+      if (b.dish.price == null) return -1;
+      return a.dish.price - b.dish.price;
+    });
+    else if (sortBy === "valoracion") out.sort(function (a, b) { return (b.venue.rating || 0) - (a.venue.rating || 0); });
     else out.sort(function (a, b) { return a.km - b.km; });
     return out;
   }
@@ -44,21 +72,29 @@
   function render() {
     var rows = flatDishes();
     var el = document.getElementById("results");
+    var verificados = rows.filter(function (x) { return x.dish.price != null; }).length;
     document.getElementById("count").textContent =
-      rows.length + (rows.length === 1 ? " plato" : " platos") + " cerca de " + ref.label;
+      rows.length + (rows.length === 1 ? " plato" : " platos") + " cerca de " + ref.label +
+      " · " + verificados + " con precio verificado";
     el.innerHTML = "";
     rows.forEach(function (x) {
       var card = document.createElement("article");
       card.className = "card";
+      var precioHtml = x.dish.price == null
+        ? '<span class="price none">sin precio verificado</span>'
+        : '<span class="price">' + fmtEur(x.dish.price) + "</span>";
+      var ratingHtml = x.venue.rating == null
+        ? "<span>★ nuevo en Antojo</span>"
+        : "<span>★ " + x.venue.rating.toFixed(1) + " (" + x.venue.reviews + ")</span>";
       card.innerHTML =
-        '<div class="dish">' + x.dish.name + ' <span class="price">' + fmtEur(x.dish.price) + "</span></div>" +
-        '<div class="venue">' + x.venue.name + ' · ' + x.venue.address + "</div>" +
+        '<div class="dish">' + esc(x.dish.name) + " " + precioHtml + "</div>" +
+        '<div class="venue">' + esc(x.venue.name) + " · " + esc(x.venue.address) + "</div>" +
         '<div class="meta">' +
           "<span>📍 " + fmtKm(x.km) + "</span>" +
-          "<span>★ " + x.venue.rating.toFixed(1) + " (" + x.venue.reviews + ")</span>" +
-          "<span>" + x.venue.band + "</span>" +
+          ratingHtml +
+          "<span>" + esc(x.venue.band) + "</span>" +
         "</div>" +
-        '<div class="sample">precio de muestra · pendiente de verificación</div>';
+        verifLine(x.dish);
       el.appendChild(card);
     });
     updateMap(rows);

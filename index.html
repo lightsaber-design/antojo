@@ -17,8 +17,11 @@
 <div class="banner">
   Base semilla: hamburguesas, ramen y brunch del centro de Dublín con precios
   reales verificados el 30 oct 2026, cada uno con fuente y canal (carta oficial,
-  pedido online, Deliveroo o foto de la carta). Solo Banyi sigue pendiente,
-  tras agotar fuentes. Regla Antojo: revalidar cada 90 días, primero lo más buscado.
+  pedido online, Deliveroo o foto de la carta). Escribe un plato (ej.
+  «cheeseburger») y compara el mismo plato entre locales: el mapa lo colorea
+  por precio. Regla Antojo: revalidar cada 90 días, primero lo más buscado; la
+  ficha avisa sola cuando toca revalidar. Solo Banyi sigue pendiente, tras
+  agotar fuentes.
 </div>
 
 <main>
@@ -38,10 +41,12 @@
       </select>
       <button id="geo">📍 Usar mi ubicación</button>
     </div>
+    <div id="top-searches" class="top-searches"></div>
   </section>
 
   <div id="map"></div>
 
+  <div id="compare" class="compare" hidden></div>
   <p id="count" class="count"></p>
   <section id="results"></section>
 </main>
@@ -49,6 +54,7 @@
 <footer>
   <p>Antojo · piloto Dublín · base: <a href="https://github.com/lightsaber-design/restaurant">lightsaber-design/restaurant</a></p>
   <p>Mapa © OpenStreetMap contributors · Valoraciones: Yelp · Cada precio verificado lleva su fuente y fecha; se revalida a los 90 días.</p>
+  <p>Comparación del mismo plato en mapa inspirada en cheapotle · histórico y refresco inspirados en PriceBite (solo ideas, sin código) · metodología de extracción de cartas adaptada de amsterdam-menus (MIT). Atribuciones: NOTICE.md en el repo.</p>
 </footer>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>

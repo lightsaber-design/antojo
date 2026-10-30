@@ -30,3 +30,18 @@ select, #geo { border: 1px solid #ddd2c2; background: #fff; border-radius: 10px;
 .price.none { font-size: .78rem; color: #a08540; font-weight: 400; }
 footer { padding: 18px 16px 30px; color: #8a8072; font-size: .8rem; max-width: 860px; margin: 0 auto; }
 footer a { color: inherit; }
+
+/* 30 oct 2026: comparacion, frescura viva, historico y busquedas locales */
+.compare { background: #eaf3ec; border: 1px solid #cfe3d4; color: #1f5138; font-size: .88rem;
+  padding: 10px 14px; margin: 0 0 12px; border-radius: 10px; }
+.top-searches { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 0 0 8px;
+  font-size: .82rem; color: #6b6257; }
+.chip.small { padding: 4px 10px; font-size: .8rem; }
+.price-marker { color: #fff; font-size: .72rem; font-weight: 700; padding: 2px 6px; border-radius: 8px;
+  border: 1.5px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,.35); white-space: nowrap; }
+.verify.stale { color: #b26a00; }
+.price.stale { color: #8a8072; font-weight: 400; }
+.price.stale em { font-style: normal; font-size: .72rem; color: #b26a00; }
+.hist { margin-top: 6px; font-size: .74rem; color: #6b6257; }
+.hist.up { color: #a0412f; }
+.hist.down { color: #1d7a3d; }

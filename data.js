@@ -27,13 +27,21 @@
 // Carol, 30 oct 2026: un plato solo queda pendiente tras agotar fuentes
 // (web oficial, pedido online, plataformas de delivery, cartas de terceros).
 // Restaurantes y valoraciones: Yelp, oct 2026 (rating:null = sin ficha Yelp).
+// Historico (opcional, campo hist): observaciones anteriores del mismo plato,
+// [{price, chk, src, ch}] de mas antigua a mas reciente; la ficha muestra la
+// evolucion ("antes EUR X -> ahora EUR Y"). Idea de PriceBite (GPL-3.0: solo
+// ideas, sin codigo). Ver NOTICE.md.
+// pipeline/revalidate.js: cola de revalidacion a 90 dias, primero lo mas buscado.
+// pipeline/extract-menu.js: candidatos de platos desde la web oficial de un
+// local (metodologia adaptada de amsterdam-menus, MIT). Nada entra sin revision.
 const VERIFIED = "2026-10-30";
+const FRESH_DAYS = 90; // regla de Carol: un precio guardado se revalida a los 90 dias
 const SRC_BUNSEN = "https://order.toasttab.com/online/bunsen-dame-53-dame-st-dublin-2-d02-v525"; // pedido online oficial Bunsen (tienda Dame St; misma carta en las 4 sucursales)
 const SRC_DASH = "https://www.dashburger.ie/menu/";
 const SRC_MADEGG = "https://www.madegg.ie/menu/";
 const SRC_WOW = "https://wowburger.ie/";
 const SRC_BOBOS = "https://bobos.ie/wp-content/uploads/2026/10/Bobos-Menu.pdf";
-function dish(name, price, src, ch) { return { name: name, price: price, src: src, chk: VERIFIED, ch: ch }; }
+function dish(name, price, src, ch, hist) { var d = { name: name, price: price, src: src, chk: VERIFIED, ch: ch }; if (hist) d.hist = hist; return d; }
 function pendiente(name) { return { name: name, price: null }; }
 const BUNSEN_DISHES = [
   dish("Hamburger", 9.65, SRC_BUNSEN, "toast"),

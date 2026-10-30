@@ -30,7 +30,10 @@
     carta: "carta oficial del restaurante",
     pdf: "carta oficial (PDF)",
     toast: "pedido online oficial (recogida)",
-    web: "web oficial (pedidos)"
+    square: "pedido online oficial (recogida)",
+    web: "web oficial (pedidos)",
+    deliveroo: "Deliveroo (entrega a domicilio)",
+    foto: "carta en el local (foto de terceros)"
   };
   function esc(t) {
     return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");

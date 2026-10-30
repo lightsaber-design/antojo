@@ -14,6 +14,12 @@
  * --searches: JSON {"termino": conteo}. La demo guarda las busquedas del
  * dispositivo en localStorage (clave "antojo-searches-v1"); exportalas a un
  * JSON para priorizar la cola con lo que se busca de verdad.
+ *
+ * --encargos: JSON {"termino": {"n": veces, "first": fecha, "last": fecha}}.
+ * La demo guarda en localStorage (clave "antojo-encargos-v1") los platos que
+ * se buscaron y NO estan en la base (Carol, 30 oct 2026: cualquier plato que
+ * busque se investiga). Se listan al principio de la cola como investigacion
+ * pendiente: ninguno entra a data.js sin verificacion en fuentes oficiales.
  */
 "use strict";
 const fs = require("fs");
@@ -34,6 +40,19 @@ const VENUES = data.VENUES, FRESH = data.FRESH;
 
 let searches = {};
 if (searchesPath) searches = JSON.parse(fs.readFileSync(searchesPath, "utf8"));
+
+let encargosPath = null;
+for (let i = 0; i < args.length; i++) { if (args[i] === "--encargos") encargosPath = args[++i]; }
+let encargos = {};
+if (encargosPath) encargos = JSON.parse(fs.readFileSync(encargosPath, "utf8"));
+const encList = Object.keys(encargos)
+  .map((k) => ({ term: k, n: (encargos[k] && encargos[k].n) || 0, last: (encargos[k] && encargos[k].last) || "-" }))
+  .sort((a, b) => b.n - a.n);
+if (encList.length) {
+  console.log("ENCARGOS (platos buscados que faltan en la base; investigar primero):");
+  for (const e of encList) console.log(`  - ${e.term}  x${e.n}  (ultima vez: ${e.last})`);
+  console.log("");
+}
 
 const norm = (s) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 function searchScore(dishName) {

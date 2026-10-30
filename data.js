@@ -31,6 +31,12 @@
 // [{price, chk, src, ch}] de mas antigua a mas reciente; la ficha muestra la
 // evolucion ("antes EUR X -> ahora EUR Y"). Idea de PriceBite (GPL-3.0: solo
 // ideas, sin codigo). Ver NOTICE.md.
+// 30 oct 2026 (3a iteracion, a peticion de Carol): categoria SUSHI cargada con
+// precios reales (Eatokyo, Takara y Musashi amplian su carta; se suman Izushi,
+// Kyodai x2 y Yamamori). Banyi cerro en nov 2025 (HappyCow): en 3-4 Bedford Row
+// abrio Izushi (izushi.ie), asi que sus 2 pendientes se retiran con el local.
+// Yamamori: su web oficial no publica la carta con precios; se usa la carta
+// recopilada por FreeFromly (ch:"agregador"), terceros, sin fecha de carta.
 // pipeline/revalidate.js: cola de revalidacion a 90 dias, primero lo mas buscado.
 // pipeline/extract-menu.js: candidatos de platos desde la web oficial de un
 // local (metodologia adaptada de amsterdam-menus, MIT). Nada entra sin revision.
@@ -67,6 +73,13 @@ const BOBOS_DISHES = [
   dish("Steak Beef Burger", 11.95, SRC_BOBOS, "pdf"),
   dish("The Cheese Burger", 13.45, SRC_BOBOS, "pdf"),
   dish("The Bacon Cheese Burger", 14.95, SRC_BOBOS, "pdf")
+];
+const SRC_KYODAI = "https://www.kyodai.ie/menu-1?menu=menu"; // carta oficial Kyodai (misma en las 2 sucursales)
+const KYODAI_DISHES = [
+  dish("California Roll (8 piezas)", 11.80, SRC_KYODAI, "carta"),
+  dish("Ebi Tempura Masago Roll (8 piezas)", 12.80, SRC_KYODAI, "carta"),
+  dish("Spider Floss Roll", 13.80, SRC_KYODAI, "carta"),
+  dish("Rainbow Roll", 19.80, SRC_KYODAI, "carta")
 ];
 const VENUES = [
   // ---- HAMBURGUESAS: 20 locales del centro con precios verificados ----
@@ -180,19 +193,30 @@ const VENUES = [
       dish("Prime Angus 8oz Beef Burger", 23.00, "https://www.bankoncollegegreen.com/wp-content/uploads/Dinner-PDF.pdf", "pdf")
     ]},
   // ---- RAMEN y BRUNCH: locales reales; precios pendientes de verificacion ----
-  { id:"eatokyo", name:"Eatokyo", cat:"ramen", rating:4.6, reviews:50, band:"€€",
+  { id:"eatokyo", name:"Eatokyo", cat:"ramen", cats:["ramen","sushi"], rating:4.6, reviews:50, band:"€€",
     address:"51 Wellington Quay, Temple Bar, Dublin 2", lat:53.3459999, lon:-6.26264,
     source:"https://www.yelp.com/biz/eatokyo-dublin",
     dishes:[
       dish("Chicken Ramen", 17.50, "https://eatokyo.ie/eatokyo-temple-bar/", "carta"),
-      dish("Chicken Gyoza", 7.90, "https://eatokyo.ie/eatokyo-temple-bar/", "carta")
+      dish("Chicken Gyoza", 7.90, "https://eatokyo.ie/eatokyo-temple-bar/", "carta"),
+      // Sushi (misma carta oficial):
+      dish("Salmon Roll (8 piezas)", 7.90, "https://eatokyo.ie/eatokyo-temple-bar/", "carta"),
+      dish("Spicy Tuna Roll (8 piezas)", 7.90, "https://eatokyo.ie/eatokyo-temple-bar/", "carta"),
+      dish("California (8 piezas)", 9.50, "https://eatokyo.ie/eatokyo-temple-bar/", "carta"),
+      dish("Ebi Tempura Masago (8 piezas)", 10.50, "https://eatokyo.ie/eatokyo-temple-bar/", "carta")
     ]},
-  { id:"takara", name:"Takara", cat:"ramen", rating:4.5, reviews:16, band:"€€",
+  { id:"takara", name:"Takara", cat:"ramen", cats:["ramen","sushi"], rating:4.5, reviews:16, band:"€€",
     address:"37 Abbey Street Upper, Dublin 1", lat:53.3444426, lon:-6.2596904,
     source:"https://www.yelp.com/biz/takara-dublin",
     dishes:[
       dish("Tonkotsu Original Ramen", 13.45, "https://takara.ie/takara/takeaway", "web"),
-      dish("Chicken Miso Ramen", 13.45, "https://takara.ie/takara/takeaway", "web")
+      dish("Chicken Miso Ramen", 13.45, "https://takara.ie/takara/takeaway", "web"),
+      // Sushi (mismo pedido online oficial):
+      dish("Salmon Roll (8 piezas)", 6.00, "https://takara.ie/takara/takeaway", "web"),
+      dish("Tuna Roll (8 piezas)", 6.00, "https://takara.ie/takara/takeaway", "web"),
+      dish("California (8 piezas)", 8.50, "https://takara.ie/takara/takeaway", "web"),
+      dish("Spicy Salmon Roll (8 piezas)", 9.20, "https://takara.ie/takara/takeaway", "web"),
+      dish("Chicken Katsu Roll (8 piezas)", 8.50, "https://takara.ie/takara/takeaway", "web")
     ]},
   { id:"maneki", name:"Maneki", cat:"ramen", rating:4.4, reviews:11, band:"€€",
     address:"43 Dawson Street, Dublin 2", lat:53.34086, lon:-6.25862,
@@ -201,13 +225,18 @@ const VENUES = [
       dish("Tonkotsu Ramen/Udon", 19.50, "https://maneki.ie/menus/", "carta"),
       dish("Chicken Katsu Curry Donburi", 18.00, "https://maneki.ie/menus/", "carta")
     ]},
-  { id:"musashi-capel", name:"Musashi", cat:"ramen", rating:4.1, reviews:163, band:"€€",
+  { id:"musashi-capel", name:"Musashi", cat:"ramen", cats:["ramen","sushi"], rating:4.1, reviews:163, band:"€€",
     address:"15 Capel Street, Dublin 1", lat:53.34695, lon:-6.26807,
     source:"https://www.yelp.com/biz/musashi-dublin",
     dishes:[
       // Musashi no sirve ramen (carta oficial); platos reales verificados:
       dish("California Roll (8 piezas)", 7.50, "https://musashidublin.com/capel-street/doc/menu.pdf", "pdf"),
-      dish("Musashi Yaki Soba", 14.50, "https://musashidublin.com/capel-street/doc/menu.pdf", "pdf")
+      dish("Musashi Yaki Soba", 14.50, "https://musashidublin.com/capel-street/doc/menu.pdf", "pdf"),
+      // Sushi (mismo PDF oficial):
+      dish("Salmon Roll (8 piezas)", 5.99, "https://musashidublin.com/capel-street/doc/menu.pdf", "pdf"),
+      dish("Spicy Tuna Roll (8 piezas)", 6.99, "https://musashidublin.com/capel-street/doc/menu.pdf", "pdf"),
+      dish("Ebi Tempura Masago Roll (8 piezas)", 7.99, "https://musashidublin.com/capel-street/doc/menu.pdf", "pdf"),
+      dish("Rainbow Roll (8 piezas)", 18.99, "https://musashidublin.com/capel-street/doc/menu.pdf", "pdf")
     ]},
   { id:"ramen-bar", name:"The Ramen Bar", cat:"ramen", rating:4.1, reviews:173, band:"€€",
     address:"51 William Street S, Dublin 2", lat:53.3416, lon:-6.26274,
@@ -224,13 +253,40 @@ const VENUES = [
       dish("Chicken Ramen", 19.80, "https://deliveroo.ie/menu/dublin/dublin-2/zakura-lunch-wexford-st", "deliveroo"),
       dish("Chilli Chicken Ramen", 21.00, "https://deliveroo.ie/menu/dublin/dublin-2/zakura-lunch-wexford-st", "deliveroo")
     ]},
-  // Banyi queda pendiente tras agotar fuentes (30 oct 2026): carta oficial no
-  // accesible, Flipdish "no disponible", Uber Eats cerrado en 2023, Deliveroo no
-  // disponible en la zona, agregadores (sluurpy/menuweb/carta.menu) sin precios.
-  { id:"banyi", name:"Banyi Japanese Dining", cat:"ramen", rating:4.2, reviews:82, band:"€€",
-    address:"3-4 Bedford Row, Temple Bar, Dublin 2", lat:53.34601, lon:-6.26198,
-    source:"https://www.yelp.com/biz/banyi-japanese-dining-dublin",
-    dishes:[ pendiente("Ramen"), pendiente("Tempura") ]},
+  // Banyi Japanese Dining CERRO en nov 2025 (HappyCow: "Reported closed
+  // November 2025"; postcard.inc: "Permanently Closed"). En su direccion,
+  // 3-4 Bedford Row, abrio Izushi (izushi.ie), que queda cargado abajo en SUSHI.
+  // Se retiran sus 2 platos pendientes: ya no hay nada que verificar.
+  // ---- SUSHI: locales dedicados anadidos el 30 oct 2026 ----
+  { id:"izushi", name:"Izushi Izakaya", cat:"sushi", rating:null, reviews:0, band:"€€",
+    address:"3-4 Bedford Row, Temple Bar, Dublin 2", lat:53.345919, lon:-6.261906,
+    source:"https://www.izushi.ie/",
+    dishes:[
+      dish("Rainbow Roll", 18.90, "https://www.izushi.ie/", "carta"),
+      dish("Dragon Roll", 18.90, "https://www.izushi.ie/", "carta"),
+      dish("Izushi Platter (chef selection)", 21.50, "https://www.izushi.ie/", "carta"),
+      dish("Sashimi Platter (chef selection)", 38.90, "https://www.izushi.ie/", "carta")
+    ]},
+  { id:"kyodai-dame", name:"Kyodai Izakaya (Dame St)", cat:"sushi", rating:null, reviews:0, band:"€€",
+    address:"First Floor, 32 Dame Street, Dublin 2", lat:53.3442137, lon:-6.2634147,
+    source:"https://www.kyodai.ie/",
+    dishes:KYODAI_DISHES },
+  { id:"kyodai-eden", name:"Kyodai Izakaya (Eden Quay)", cat:"sushi", rating:null, reviews:0, band:"€€",
+    address:"10 Eden Quay, North City, Dublin 1", lat:53.3479555, lon:-6.2578862,
+    source:"https://www.kyodai.ie/",
+    dishes:KYODAI_DISHES },
+  { id:"yamamori-south", name:"Yamamori South City", cat:"sushi", rating:null, reviews:0, band:"€€",
+    address:"71/72 South Great George's Street, Dublin 2", lat:53.3428358, lon:-6.2646782,
+    source:"https://www.yamamori.ie/southcity",
+    dishes:[
+      // Su web oficial no publica precios; carta recopilada por FreeFromly
+      // (terceros, leida de la carta del restaurante, sin fecha de carta):
+      dish("Salmon Roll", 14.25, "https://freefromly.com/restaurant/yamamori-south-city-dublin", "agregador"),
+      dish("Salmon & Avocado Roll", 14.75, "https://freefromly.com/restaurant/yamamori-south-city-dublin", "agregador"),
+      dish("California Roll", 17.75, "https://freefromly.com/restaurant/yamamori-south-city-dublin", "agregador"),
+      dish("Spicy Bluefin Tuna Roll", 19.25, "https://freefromly.com/restaurant/yamamori-south-city-dublin", "agregador"),
+      dish("Rainbow Roll", 27.95, "https://freefromly.com/restaurant/yamamori-south-city-dublin", "agregador")
+    ]},
   { id:"little-kitchen", name:"The Little Kitchen", cat:"brunch", rating:4.7, reviews:47, band:"€€",
     address:"129 Leeson Street Upper, Dublin", lat:53.33036, lon:-6.25152,
     source:"https://www.yelp.com/biz/the-little-kitchen-dublin",

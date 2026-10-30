@@ -45,3 +45,19 @@ footer a { color: inherit; }
 .hist { margin-top: 6px; font-size: .74rem; color: #6b6257; }
 .hist.up { color: #a0412f; }
 .hist.down { color: #1d7a3d; }
+
+/* 3a iteracion: autocompletado y encargos */
+.controls { position: relative; }
+.suggest {
+  position: absolute; z-index: 30; left: 0; right: 0; top: 38px;
+  margin: 0; padding: 4px; list-style: none;
+  background: #fff; border: 1px solid #d8cfc4; border-radius: 10px;
+  box-shadow: 0 8px 20px rgba(60, 40, 20, .18);
+}
+.suggest li { padding: 7px 10px; border-radius: 7px; cursor: pointer; font-size: 14px; }
+.suggest li:hover { background: #f4ede2; }
+.encargo {
+  margin: 8px 0 0; padding: 10px 12px; border-radius: 10px;
+  background: #fdf3e3; border: 1px solid #ecd9b0; font-size: 13.5px; line-height: 1.45;
+}
+.encargos-list { margin-top: 6px; font-size: 12.5px; color: #7a6a55; }

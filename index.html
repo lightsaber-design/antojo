@@ -15,23 +15,27 @@
 </header>
 
 <div class="banner">
-  Base semilla: hamburguesas, ramen y brunch del centro de Dublín con precios
-  reales verificados el 30 oct 2026, cada uno con fuente y canal (carta oficial,
-  pedido online, Deliveroo o foto de la carta). Escribe un plato (ej.
-  «cheeseburger») y compara el mismo plato entre locales: el mapa lo colorea
-  por precio. Regla Antojo: revalidar cada 90 días, primero lo más buscado; la
-  ficha avisa sola cuando toca revalidar. Solo Banyi sigue pendiente, tras
-  agotar fuentes.
+  Piloto: hamburguesas, ramen, sushi y brunch del centro de Dublín con precios
+  reales verificados el 30 oct 2026, cada uno de un plato concreto con su fuente
+  y canal (carta oficial, pedido online, Deliveroo o carta de terceros). Escribe
+  un plato (ej. «sushi», «cheeseburger») y salen todas las opciones, cada una
+  con su precio; el mapa las colorea por precio. Las sugerencias salen de platos
+  reales, y lo que busques y no esté queda encargado para investigación. Banyi
+  cerró en nov 2025: en su dirección de Bedford Row abrió Izushi. Regla Antojo:
+  revalidar cada 90 días, primero lo más buscado; la ficha avisa sola.
 </div>
 
 <main>
   <section class="controls">
-    <input id="q" type="search" placeholder="¿Qué se te antoja? Ej.: ramen, hamburguesa, pancakes…" autocomplete="off">
+    <input id="q" type="search" placeholder="¿Qué se te antoja? Ej.: sushi, ramen, hamburguesa, pancakes…" autocomplete="off">
+    <ul id="suggest" class="suggest" hidden></ul>
+    <div id="encargos"></div>
     <div class="row">
       <div class="chips">
         <button class="chip on" data-cat="todo">Todo</button>
         <button class="chip" data-cat="hamburguesas">🍔 Hamburguesas</button>
         <button class="chip" data-cat="ramen">🍜 Ramen</button>
+        <button class="chip" data-cat="sushi">🍣 Sushi</button>
         <button class="chip" data-cat="brunch">🥞 Brunch</button>
       </div>
       <select id="sort" aria-label="Ordenar por">

@@ -7,6 +7,14 @@
 //  - frescura viva con la regla de 90 dias de Carol: la ficha avisa cuando
 //    toca revalidar y marca el precio como no vigente al pasar la regla
 //  - conteo local de busquedas ("se revalida primero lo mas buscado")
+// 30 oct 2026 (3a iteracion, a peticion de Carol):
+//  - busqueda por tokens con sinonimos ES<->EN y terminos de cocina:
+//    "sushi" encuentra rolls/maki/nigiri aunque no lleven la palabra "sushi"
+//  - sugerencias (autocompletado) desde los nombres reales de los platos,
+//    para no escribir platos que no existen
+//  - encargos: si el plato buscado no esta en la base, queda registrado
+//    para investigacion (cola local; la investigacion automatica en vivo
+//    es del backend de Fase 1, esta demo es estatica)
 // Atribuciones completas en NOTICE.md.
 (function () {
   var FRESH = (typeof FRESH_DAYS !== "undefined") ? FRESH_DAYS : 90;
@@ -64,6 +72,7 @@
     toast: "pedido online oficial (recogida)",
     square: "pedido online oficial (recogida)",
     web: "web oficial (pedidos)",
+    agregador: "carta recopilada por terceros (agregador, sin fecha de carta)",
     deliveroo: "Deliveroo (entrega a domicilio)",
     foto: "carta en el local (foto de terceros)"
   };
@@ -141,19 +150,77 @@
     });
   }
 
+  // --- Sinonimos y terminos de cocina (ES<->EN): un plato coincide si TODOS
+  // los tokens de la busqueda aparecen (o alguno de sus sinonimos) en el
+  // nombre del plato, el local o su categoria. Asi "sushi" encuentra rolls,
+  // maki y nigiri aunque el nombre del plato no diga "sushi".
+  var SINONIMOS = {
+    sushi: ["sushi", "roll", "maki", "nigiri", "sashimi", "temaki", "futomaki", "hosomaki", "norimaki", "california"],
+    rolls: ["roll", "maki", "norimaki", "futomaki"],
+    maki: ["maki", "roll", "norimaki", "hosomaki", "futomaki"],
+    nigiri: ["nigiri", "sushi"],
+    sashimi: ["sashimi", "sushi"],
+    hamburguesa: ["hamburguesa", "burger", "hamburger", "cheeseburger", "smash"],
+    hamburguesas: ["hamburguesa", "burger", "hamburger", "cheeseburger", "smash"],
+    burger: ["burger", "hamburger", "cheeseburger", "smash", "hamburguesa"],
+    pollo: ["pollo", "chicken", "katsu", "karaage"],
+    gambas: ["gamba", "prawn", "shrimp", "ebi"],
+    gamba: ["gamba", "prawn", "shrimp", "ebi"],
+    cerdo: ["cerdo", "pork", "chashu", "bacon", "pancetta"],
+    ternera: ["ternera", "beef", "angus", "brisket", "steak"],
+    pescado: ["pescado", "fish", "salmon", "tuna", "seabass"],
+    salmon: ["salmon", "sake"],
+    atun: ["atun", "tuna", "maguro"],
+    huevos: ["huevos", "egg", "benedict", "scrambled"],
+    huevo: ["huevo", "egg", "benedict", "scrambled"],
+    desayuno: ["desayuno", "breakfast", "brunch", "irish"],
+    pancakes: ["pancake", "tortitas"],
+    tortitas: ["pancake", "tortitas"],
+    noodles: ["noodle", "ramen", "udon", "soba", "yaki"],
+    fideos: ["noodle", "ramen", "udon", "soba", "fideos"],
+    arroz: ["arroz", "rice", "donburi", "chahan", " don"],
+    gyoza: ["gyoza", "dumpling"],
+    dumplings: ["dumpling", "gyoza"],
+    veggie: ["veggie", "vegetarian", "vegan", "veg ", "halloumi"],
+    vegetariano: ["vegetarian", "vegan", "veggie", "veg ", "halloumi"],
+    picante: ["picante", "spicy", "chilli", "chili", "hot"],
+    cafe: ["cafe", "coffee"],
+    croissant: ["croissant", "bolleria"],
+    curry: ["curry", "katsu"],
+    bao: ["bao", "bun"],
+    brunch: ["brunch", "breakfast", "irish", "pancake", "egg"]
+  };
+  function terminosDe(t) {
+    if (SINONIMOS[t]) return SINONIMOS[t];
+    // plural simple: "rolls" -> "roll"
+    if (t.length > 3 && t.charAt(t.length - 1) === "s" && SINONIMOS[t.slice(0, -1)]) return SINONIMOS[t.slice(0, -1)];
+    return [t];
+  }
+  function venueCats(v) { return v.cats || [v.cat]; }
+  function haystack(x) {
+    return norm(x.dish.name + " " + x.venue.name + " " + venueCats(x.venue).join(" "));
+  }
+  function matchesQuery(x, q) {
+    var hay = haystack(x);
+    var tokens = norm(q).split(/\s+/).filter(function (t) { return t.length > 0; });
+    if (!tokens.length) return true;
+    var frase = tokens.join(" ");
+    if (frase.length >= 3 && hay.indexOf(frase) >= 0) return true;
+    return tokens.every(function (t) {
+      return terminosDe(t).some(function (term) { return hay.indexOf(term) >= 0; });
+    });
+  }
+
   function flatDishes() {
     var out = [];
     VENUES.forEach(function (v) {
-      if (activeCat !== "todo" && v.cat !== activeCat) return;
+      if (activeCat !== "todo" && venueCats(v).indexOf(activeCat) < 0) return;
       v.dishes.forEach(function (d) {
         out.push({ venue: v, dish: d, km: haversineKm(ref, v) });
       });
     });
     if (query) {
-      var q = norm(query);
-      out = out.filter(function (x) {
-        return norm(x.dish.name).indexOf(q) >= 0 || norm(x.venue.name).indexOf(q) >= 0;
-      });
+      out = out.filter(function (x) { return matchesQuery(x, query); });
     }
     if (sortBy === "precio") out.sort(function (a, b) {
       if (a.dish.price == null && b.dish.price == null) return a.km - b.km;
@@ -201,6 +268,100 @@
     return "rgb(" + r + "," + g + "," + b + ")";
   }
 
+  // --- Encargos: platos buscados que no estan en la base (Carol, 30 oct 2026:
+  // cualquier plato que busque se investiga). En esta demo estatica el encargo
+  // se registra en el navegador y alimenta la cola de investigacion; la
+  // investigacion automatica en vivo forma parte del backend de Fase 1.
+  var ENC_KEY = "antojo-encargos-v1";
+  function loadEnc() {
+    try { return JSON.parse(localStorage.getItem(ENC_KEY)) || {}; } catch (e) { return {}; }
+  }
+  function recordEncargo(q) {
+    q = norm(q).trim();
+    if (q.length < 3) return;
+    var e = loadEnc();
+    var it = e[q] || { n: 0, first: new Date().toISOString().slice(0, 10) };
+    it.n += 1;
+    it.last = new Date().toISOString().slice(0, 10);
+    e[q] = it;
+    try { localStorage.setItem(ENC_KEY, JSON.stringify(e)); } catch (err) {}
+  }
+  function renderEncargos(currentMiss) {
+    var el = document.getElementById("encargos");
+    if (!el) return;
+    var e = loadEnc();
+    var items = Object.keys(e).map(function (k) { return [k, e[k]]; })
+      .sort(function (a, b) { return b[1].n - a[1].n; });
+    var html = "";
+    if (currentMiss) {
+      html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
+        "Queda encargado: se investiga en fuentes oficiales (carta web, PDF de carta, pedido online) " +
+        "y se añade con fuente, fecha y canal. En esta demo el encargo se registra aquí y ordena la " +
+        "próxima investigación; la búsqueda automática en vivo llega con el backend.</div>";
+    }
+    if (items.length) {
+      html += '<div class="encargos-list">Encargos registrados: ' +
+        items.slice(0, 6).map(function (it) { return esc(it[0]) + " ×" + it[1].n; }).join(" · ") + "</div>";
+    }
+    el.innerHTML = html;
+  }
+
+  // --- Autocompletado: sugerencias desde los nombres reales de los platos ---
+  function dishNames() {
+    var seen = {}, out = [];
+    VENUES.forEach(function (v) {
+      v.dishes.forEach(function (d) {
+        var k = norm(d.name);
+        if (!seen[k]) { seen[k] = 1; out.push(d.name); }
+      });
+    });
+    return out;
+  }
+  var SUGGEST_TERMS = ["sushi", "ramen", "hamburguesa", "cheeseburger", "smash burger", "brunch",
+    "full irish breakfast", "pancakes", "croissant", "gyoza", "california roll", "rainbow roll",
+    "spicy tuna roll", "salmon roll", "sashimi", "curry", "bao", "katsu"];
+  function suggestionsFor(q) {
+    var nq = norm(q).trim();
+    if (nq.length < 2) return [];
+    var cands = SUGGEST_TERMS.concat(dishNames());
+    var seen = {}, scored = [];
+    cands.forEach(function (c) {
+      var nc = norm(c);
+      if (seen[nc] || nc === nq) return;
+      var i = nc.indexOf(nq);
+      if (i < 0) {
+        // coinciden todos los tokens en cualquier orden
+        var toks = nq.split(/\s+/).filter(Boolean);
+        if (!toks.every(function (t) { return nc.indexOf(t) >= 0; })) return;
+        i = 50;
+      }
+      seen[nc] = 1;
+      scored.push([i, c]);
+    });
+    scored.sort(function (a, b) { return a[0] - b[0] || a[1].length - b[1].length; });
+    return scored.slice(0, 7).map(function (x) { return x[1]; });
+  }
+  function renderSuggest() {
+    var el = document.getElementById("suggest");
+    if (!el) return;
+    var items = suggestionsFor(query);
+    el.innerHTML = "";
+    if (!items.length) { el.hidden = true; return; }
+    items.forEach(function (txt) {
+      var li = document.createElement("li");
+      li.textContent = txt;
+      li.addEventListener("mousedown", function (ev) {
+        ev.preventDefault();
+        document.getElementById("q").value = txt;
+        query = txt;
+        el.hidden = true;
+        render();
+      });
+      el.appendChild(li);
+    });
+    el.hidden = false;
+  }
+
   function render() {
     var rows = flatDishes();
     var comp = comparison(rows);
@@ -212,6 +373,7 @@
       rows.length + (rows.length === 1 ? " plato" : " platos") + " cerca de " + ref.label +
       " · " + verificados + " con precio verificado" +
       (obsoletos ? " · " + obsoletos + " sin revalidar (>" + FRESH + " días)" : "");
+    renderEncargos(query.trim().length >= 3 && rows.length === 0 ? query : null);
     el.innerHTML = "";
     rows.forEach(function (x) {
       var st = freshState(x.dish);
@@ -316,14 +478,38 @@
     render();
     renderTopSearches();
 
-    document.getElementById("q").addEventListener("input", function (e) {
+    var qInput = document.getElementById("q");
+    qInput.addEventListener("input", function (e) {
       query = e.target.value.trim();
       render();
+      renderSuggest();
       if (searchTimer) clearTimeout(searchTimer);
       searchTimer = setTimeout(function () {
         recordSearch(query);
         renderTopSearches();
+        var rows = flatDishes();
+        if (query.trim().length >= 3 && rows.length === 0) {
+          recordEncargo(query);
+          renderEncargos(query);
+        }
       }, 900);
+    });
+    qInput.addEventListener("blur", function () {
+      setTimeout(function () {
+        var el = document.getElementById("suggest");
+        if (el) el.hidden = true;
+      }, 150);
+    });
+    qInput.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") {
+        var el = document.getElementById("suggest");
+        if (el && !el.hidden && el.firstChild) {
+          qInput.value = el.firstChild.textContent;
+          query = qInput.value;
+          el.hidden = true;
+          render();
+        }
+      }
     });
     document.getElementById("sort").addEventListener("change", function (e) {
       sortBy = e.target.value;

@@ -1,5 +1,7 @@
 # Antojo — demo piloto Dublín
 
+**Demo en vivo:** https://lightsaber-design.github.io/restaurant/
+
 Demo funcional estática (GitHub Pages): búsqueda de restaurantes por **plato**,
 precio, distancia y valoración. Piloto en el centro de Dublín.
 

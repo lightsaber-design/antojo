@@ -71,6 +71,13 @@ App global para buscar restaurantes por plato, precio, distancia y recomendació
 - Places es el costo dominante a escala
 - Controles: rotar/restringir la API key y alertas de $50
 
+## Estado Fase 1 (30 oct 2026)
+
+Backend en vivo sobre free tiers de su Cloudflare (Worker antojo-api + D1
+antojo-db + crons de investigación y revalidación 90 días) en vez de
+Supabase: mismo modelo (base propia, cola por demanda), sin alta nueva y a
+€0. Detalles en README.md y worker/.
+
 ## Pendientes
 
 - Elegir categoría y zona del piloto (sugerencias: ramen, hamburguesas o brunch en el centro de Dublín)

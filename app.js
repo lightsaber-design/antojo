@@ -26,6 +26,11 @@
   var markers = [];
   var map = null;
   var searchTimer = null;
+  // Backend Fase 1 (Worker + D1): la demo consulta primero la base propia en
+  // vivo; si la API no responde, cae a los datos locales (data.js) y lo dice.
+  var API_BASE = "https://antojo-api.caroldenissetorres.workers.dev";
+  var liveRows = null, liveQuery = null, liveState = "local";
+  var liveSeq = 0, apiSuggest = [];
 
   function norm(s) {
     return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -213,14 +218,20 @@
 
   function flatDishes() {
     var out = [];
-    VENUES.forEach(function (v) {
-      if (activeCat !== "todo" && venueCats(v).indexOf(activeCat) < 0) return;
-      v.dishes.forEach(function (d) {
-        out.push({ venue: v, dish: d, km: haversineKm(ref, v) });
+    if (liveRows && liveQuery === norm(query)) {
+      out = liveRows.slice();
+    } else {
+      VENUES.forEach(function (v) {
+        v.dishes.forEach(function (d) {
+          out.push({ venue: v, dish: d, km: haversineKm(ref, v) });
+        });
       });
-    });
-    if (query) {
-      out = out.filter(function (x) { return matchesQuery(x, query); });
+      if (query) {
+        out = out.filter(function (x) { return matchesQuery(x, query); });
+      }
+    }
+    if (activeCat !== "todo") {
+      out = out.filter(function (x) { return venueCats(x.venue).indexOf(activeCat) >= 0; });
     }
     if (sortBy === "precio") out.sort(function (a, b) {
       if (a.dish.price == null && b.dish.price == null) return a.km - b.km;
@@ -294,10 +305,17 @@
       .sort(function (a, b) { return b[1].n - a[1].n; });
     var html = "";
     if (currentMiss) {
-      html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
-        "Queda encargado: se investiga en fuentes oficiales (carta web, PDF de carta, pedido online) " +
-        "y se añade con fuente, fecha y canal. En esta demo el encargo se registra aquí y ordena la " +
-        "próxima investigación; la búsqueda automática en vivo llega con el backend.</div>";
+      if (liveState === "queued") {
+        html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
+          "El backend ya lo tiene encargado: se investiga en las cartas oficiales de los locales " +
+          "registrados (cada 2 h, primero lo más buscado) y aparecerá aquí con fuente, fecha y canal. " +
+          "Si ningún local registrado lo sirve, queda pendiente de ampliar el registro de locales.</div>";
+      } else {
+        html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
+          "Queda encargado: se investiga en fuentes oficiales (carta web, PDF de carta, pedido online) " +
+          "y se añade con fuente, fecha y canal. La API no responde ahora mismo, así que el encargo " +
+          "se registra en este navegador y se reintentará en vivo al volver la conexión.</div>";
+      }
     }
     if (items.length) {
       html += '<div class="encargos-list">Encargos registrados: ' +
@@ -323,7 +341,7 @@
   function suggestionsFor(q) {
     var nq = norm(q).trim();
     if (nq.length < 2) return [];
-    var cands = SUGGEST_TERMS.concat(dishNames());
+    var cands = apiSuggest.concat(SUGGEST_TERMS).concat(dishNames());
     var seen = {}, scored = [];
     cands.forEach(function (c) {
       var nc = norm(c);
@@ -362,6 +380,44 @@
     el.hidden = false;
   }
 
+  // Consulta en vivo a la API (base propia): si no hay el plato, el backend
+  // lo encarga e investiga en cartas oficiales (cron cada 2 h, lo mas buscado
+  // primero). Solo cuentan las respuestas de la busqueda actual.
+  function fetchLive(q) {
+    var nq = norm(q).trim();
+    if (nq.length < 3) { liveRows = null; liveQuery = null; liveState = "local"; return; }
+    var seq = ++liveSeq;
+    var ctl = new AbortController();
+    var to = setTimeout(function () { ctl.abort(); }, 5000);
+    fetch(API_BASE + "/api/search?q=" + encodeURIComponent(q) + "&lat=" + ref.lat + "&lon=" + ref.lon, { signal: ctl.signal })
+      .then(function (r) { if (!r.ok) throw new Error("http"); return r.json(); })
+      .then(function (j) {
+        clearTimeout(to);
+        if (seq !== liveSeq || norm(query).trim() !== nq) return;
+        if (!j.ok) throw new Error("api");
+        liveRows = j.results; liveQuery = nq; liveState = j.queued ? "queued" : "ok";
+        render();
+      })
+      .catch(function () {
+        clearTimeout(to);
+        if (seq !== liveSeq) return;
+        liveRows = null; liveQuery = null; liveState = "offline";
+        render();
+      });
+  }
+  function fetchSuggest(q) {
+    if (norm(q).trim().length < 2) return;
+    fetch(API_BASE + "/api/suggest?q=" + encodeURIComponent(q))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok && j.suggestions && j.suggestions.length) {
+          apiSuggest = j.suggestions;
+          renderSuggest();
+        }
+      })
+      .catch(function () {});
+  }
+
   function render() {
     var rows = flatDishes();
     var comp = comparison(rows);
@@ -369,10 +425,14 @@
     var el = document.getElementById("results");
     var verificados = rows.filter(function (x) { var s = freshState(x.dish); return s === "fresh" || s === "soon"; }).length;
     var obsoletos = rows.filter(function (x) { return freshState(x.dish) === "stale"; }).length;
+    var canalDatos = liveState === "ok" || liveState === "queued"
+      ? " · base en vivo (API)"
+      : (norm(query).trim().length >= 3 ? " · datos locales (API no disponible)" : "");
     document.getElementById("count").textContent =
       rows.length + (rows.length === 1 ? " plato" : " platos") + " cerca de " + ref.label +
       " · " + verificados + " con precio verificado" +
-      (obsoletos ? " · " + obsoletos + " sin revalidar (>" + FRESH + " días)" : "");
+      (obsoletos ? " · " + obsoletos + " sin revalidar (>" + FRESH + " días)" : "") +
+      canalDatos;
     renderEncargos(query.trim().length >= 3 && rows.length === 0 ? query : null);
     el.innerHTML = "";
     rows.forEach(function (x) {
@@ -487,6 +547,8 @@
       searchTimer = setTimeout(function () {
         recordSearch(query);
         renderTopSearches();
+        fetchLive(query);
+        fetchSuggest(query);
         var rows = flatDishes();
         if (query.trim().length >= 3 && rows.length === 0) {
           recordEncargo(query);

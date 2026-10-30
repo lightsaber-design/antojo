@@ -8,6 +8,34 @@ precio, distancia y valoración. Piloto en el centro de Dublín.
 - `index.html` + `app.js` + `data.js` + `styles.css` — sin build, sin backend.
 - Mapa: OpenStreetMap vía MapLibre GL (CDN). Sin API keys en el cliente.
 
+## Backend Fase 1 (30 oct 2026, noche): base propia en vivo
+
+Carol aprobó el backend: cualquier plato que busque un usuario se investiga
+bajo demanda, no solo los precargados. Arquitectura gratuita (€0, dentro de
+los free tiers y de su cuenta de Cloudflare existente):
+
+- **API**: Cloudflare Worker `antojo-api` (`worker/worker.js`, sin deps) en
+  https://antojo-api.caroldenissetorres.workers.dev — `GET /api/search`,
+  `/api/suggest`, `/api/stats`, `/api/queue`. CORS abierto (datos públicos).
+- **Base de datos**: D1 (`antojo-db`, SQLite): `venues`, `dishes` (con
+  src/chk/ch/hist), `searches` (lo más buscado) y `queue` (encargos).
+- **Investigación automática**: cron cada 2 h (`7 */2 * * *`) procesa la cola
+  —primero lo más buscado— descargando las cartas oficiales de los locales
+  registrados y extrayendo plato+precio (higiene de precios, dedupe; entra
+  marcado con fuente, fecha y canal, nota de auditoría). Lo que no se
+  encuentra tras 3 intentos queda `needs_review` (ampliar registro de
+  locales: el Worker no descubre locales nuevos por sí solo a coste €0).
+- **Revalidación (regla 90 días)**: cron diario (`21 4 * * *`) re-fetch de
+  los precios más antiguos; actualiza precio+fecha (guardando histórico) o
+  el precio queda marcado como sin revalidar y no se muestra como vigente.
+- **Front**: la demo consulta primero la API y cae a `data.js` si la API no
+  responde, diciéndolo («base en vivo (API)» vs «datos locales»).
+- Disparo manual del colector: `POST /api/collect` con cabecera
+  `x-antojo-key` (secreto COLLECT_KEY en el Worker).
+- Despliegue: API REST de Cloudflare con token de API acotado
+  (Workers Scripts + D1, solo su cuenta, 90 días, guardado en el vault de
+  Instinct). D1 se siembra desde `data.js` con `worker/seed.mjs`.
+
 ## Qué hace hoy (30 oct 2026)
 
 - 87 platos en 35 locales del centro (hamburguesas, ramen y brunch); 85 con

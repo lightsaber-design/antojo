@@ -20,23 +20,24 @@
   y canal (carta oficial, pedido online, Deliveroo o carta de terceros). Escribe
   un plato (ej. «sushi», «cheeseburger») y salen todas las opciones, cada una
   con su precio; el mapa las colorea por precio. Las sugerencias salen de platos
-  reales, y lo que busques y no esté queda encargado para investigación. Banyi
+  reales; los encargos solo se guardan en este navegador hasta exportarlos. Banyi
   cerró en nov 2025: en su dirección de Bedford Row abrió Izushi. Regla Antojo:
   revalidar cada 90 días, primero lo más buscado; la ficha avisa sola.
 </div>
 
 <main>
   <section class="controls">
+    <label for="q" class="search-label">Busca un plato</label>
     <input id="q" type="search" placeholder="¿Qué se te antoja? Ej.: sushi, ramen, hamburguesa, pancakes…" autocomplete="off">
     <ul id="suggest" class="suggest" hidden></ul>
     <div id="encargos"></div>
     <div class="row">
       <div class="chips">
-        <button class="chip on" data-cat="todo">Todo</button>
-        <button class="chip" data-cat="hamburguesas">🍔 Hamburguesas</button>
-        <button class="chip" data-cat="ramen">🍜 Ramen</button>
-        <button class="chip" data-cat="sushi">🍣 Sushi</button>
-        <button class="chip" data-cat="brunch">🥞 Brunch</button>
+        <button class="chip on" aria-pressed="true" data-cat="todo">Todo</button>
+        <button class="chip" aria-pressed="false" data-cat="hamburguesas">🍔 Hamburguesas</button>
+        <button class="chip" aria-pressed="false" data-cat="ramen">🍜 Ramen</button>
+        <button class="chip" aria-pressed="false" data-cat="sushi">🍣 Sushi</button>
+        <button class="chip" aria-pressed="false" data-cat="brunch">🥞 Brunch</button>
       </div>
       <select id="sort" aria-label="Ordenar por">
         <option value="distancia">Más cerca</option>
@@ -51,18 +52,20 @@
   <div id="map"></div>
 
   <div id="compare" class="compare" hidden></div>
-  <p id="count" class="count"></p>
-  <section id="results"></section>
+  <p id="count" class="count" role="status" aria-live="polite" aria-atomic="true"></p>
+  <section id="results" aria-label="Platos encontrados"></section>
 </main>
 
 <footer>
   <p>Antojo · piloto Dublín · base: <a href="https://github.com/lightsaber-design/restaurant">lightsaber-design/restaurant</a></p>
   <p>Mapa © OpenStreetMap contributors · Valoraciones: Yelp · Cada precio verificado lleva su fuente y fecha; se revalida a los 90 días.</p>
-  <p>Comparación del mismo plato en mapa inspirada en cheapotle · histórico y refresco inspirados en PriceBite (solo ideas, sin código) · metodología de extracción de cartas adaptada de amsterdam-menus (MIT). Atribuciones: NOTICE.md en el repo.</p>
+  <p>Opciones de platos en mapa inspiradas en cheapotle · histórico y refresco inspirados en PriceBite (solo ideas, sin código) · metodología de extracción de cartas adaptada de amsterdam-menus (MIT). Atribuciones: NOTICE.md en el repo.</p>
+<p>Las búsquedas y encargos se guardan solo en este dispositivo. El mapa carga recursos de MapLibre y OpenStreetMap; no hay envío automático de encargos ni revalidación de precios.</p>
 </footer>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="data.js"></script>
+<script src="price-rules.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

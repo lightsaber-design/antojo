@@ -26,6 +26,7 @@
   var markers = [];
   var map = null;
   var searchTimer = null;
+  var renderTimer = null;
 
   function norm(s) {
     return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -51,19 +52,11 @@
     var d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + dias));
     return d.getUTCFullYear() + "-" + ("0" + (d.getUTCMonth() + 1)).slice(-2) + "-" + ("0" + d.getUTCDate()).slice(-2);
   }
-  function diasDesde(iso) {
-    var p = iso.split("-");
-    var ahora = new Date();
-    var hoy = Date.UTC(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
-    return Math.floor((hoy - Date.UTC(+p[0], +p[1] - 1, +p[2])) / 86400000);
-  }
-  // Estado de frescura: "none" (sin precio), "fresh", "soon" (quedan <=15 dias), "stale" (>90 dias).
-  function freshState(d) {
-    if (d.price == null || !d.chk) return "none";
-    var dias = diasDesde(d.chk);
-    if (dias > FRESH) return "stale";
-    if (dias >= FRESH - SOON_DAYS) return "soon";
-    return "fresh";
+  function diasDesde(iso) { return AntojoPriceRules.ageDays(iso); }
+  function freshState(d) { return AntojoPriceRules.state(d, FRESH, SOON_DAYS); }
+  function currentPrice(d) {
+    var state = freshState(d);
+    return state === "fresh" || state === "soon";
   }
 
   var CANALES = {
@@ -223,9 +216,9 @@
       out = out.filter(function (x) { return matchesQuery(x, query); });
     }
     if (sortBy === "precio") out.sort(function (a, b) {
-      if (a.dish.price == null && b.dish.price == null) return a.km - b.km;
-      if (a.dish.price == null) return 1;
-      if (b.dish.price == null) return -1;
+      if (!currentPrice(a.dish) && !currentPrice(b.dish)) return a.km - b.km;
+      if (!currentPrice(a.dish)) return 1;
+      if (!currentPrice(b.dish)) return -1;
       return a.dish.price - b.dish.price;
     });
     else if (sortBy === "valoracion") out.sort(function (a, b) { return (b.venue.rating || 0) - (a.venue.rating || 0); });
@@ -239,7 +232,7 @@
     if (q.length < 2) return null;
     // Solo platos cuyo NOMBRE coincide con la busqueda (no locales que coinciden por nombre).
     var priced = rows.filter(function (x) {
-      return x.dish.price != null && freshState(x.dish) !== "stale" && norm(x.dish.name).indexOf(q) >= 0;
+      return currentPrice(x.dish) && norm(x.dish.name).indexOf(q) >= 0;
     });
     var byVenue = {};
     priced.forEach(function (x) {
@@ -256,9 +249,9 @@
     if (!comp) { el.hidden = true; el.innerHTML = ""; return; }
     el.hidden = false;
     el.innerHTML = '<strong>«' + esc(query.trim()) + '»</strong>: ' + fmtEur(comp.min.dish.price) + ' – ' +
-      fmtEur(comp.max.dish.price) + ' en ' + comp.venues.length + ' locales · el más barato: <strong>' +
+      fmtEur(comp.max.dish.price) + ' en ' + comp.venues.length + ' locales · menor precio encontrado: <strong>' +
       esc(comp.min.venue.name) + '</strong> (' + fmtEur(comp.min.dish.price) + ', a ' + fmtKm(comp.min.km) +
-      ') · el mapa colorea cada local por precio';
+      ') · opciones distintas: pueden variar plato, ración y canal; no es una comparación equivalente';
   }
   // Escala verde (mas barato) -> rojo (mas caro) para los marcadores del mapa.
   function priceColor(t) {
@@ -295,9 +288,9 @@
     var html = "";
     if (currentMiss) {
       html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
-        "Queda encargado: se investiga en fuentes oficiales (carta web, PDF de carta, pedido online) " +
-        "y se añade con fuente, fecha y canal. En esta demo el encargo se registra aquí y ordena la " +
-        "próxima investigación; la búsqueda automática en vivo llega con el backend.</div>";
+        "Puedes guardar el término para investigar en fuentes oficiales (carta web, PDF de carta, pedido online) " +
+        "y añadirlo con fuente, fecha y canal. En esta demo el encargo solo se registra aquí y necesita exportación manual para la " +
+        "próxima investigación; no se envía a ningún equipo ni se busca automáticamente.</div>";
     }
     if (items.length) {
       html += '<div class="encargos-list">Encargos registrados: ' +
@@ -349,8 +342,12 @@
     if (!items.length) { el.hidden = true; return; }
     items.forEach(function (txt) {
       var li = document.createElement("li");
-      li.textContent = txt;
-      li.addEventListener("mousedown", function (ev) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = txt;
+      li.appendChild(button);
+      button.addEventListener("mousedown", function (ev) { ev.preventDefault(); });
+      button.addEventListener("click", function (ev) {
         ev.preventDefault();
         document.getElementById("q").value = txt;
         query = txt;
@@ -380,7 +377,7 @@
       var card = document.createElement("article");
       card.className = "card";
       var precioHtml;
-      if (x.dish.price == null) {
+      if (st === "none") {
         precioHtml = '<span class="price none">sin precio verificado</span>';
       } else if (st === "stale") {
         precioHtml = '<span class="price stale">' + fmtEur(x.dish.price) + ' <em>sin revalidar</em></span>';
@@ -391,10 +388,10 @@
         ? "<span>★ nuevo en Antojo</span>"
         : "<span>★ " + x.venue.rating.toFixed(1) + " (" + x.venue.reviews + ")</span>";
       card.innerHTML =
-        '<div class="dish">' + esc(x.dish.name) + " " + precioHtml + "</div>" +
+        '<h2 class="dish">' + esc(x.dish.name) + " " + precioHtml + "</h2>" +
         '<div class="venue">' + esc(x.venue.name) + " · " + esc(x.venue.address) + "</div>" +
         '<div class="meta">' +
-          "<span>📍 " + fmtKm(x.km) + "</span>" +
+          "<span>📍 " + fmtKm(x.km) + " en línea recta</span>" +
           ratingHtml +
           "<span>" + esc(x.venue.band) + "</span>" +
         "</div>" +
@@ -463,7 +460,7 @@
     pts.push([ref.lon, ref.lat]);
     if (pts.length > 1) {
       var bounds = pts.reduce(function (b, p) { return b.extend(p); }, new maplibregl.LngLatBounds(pts[0], pts[0]));
-      map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 400 });
+      map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 400 });
     }
   }
 
@@ -474,14 +471,23 @@
   }
 
   document.addEventListener("DOMContentLoaded", function () {
-    initMap();
+    // Results and controls must survive a missing CDN or unavailable WebGL.
     render();
+    try {
+      initMap();
+      updateMap(flatDishes(), comparison(flatDishes()));
+    } catch (error) {
+      if (map) { try { map.remove(); } catch (ignored) {} }
+      map = null;
+      document.getElementById("map").hidden = true;
+    }
     renderTopSearches();
 
     var qInput = document.getElementById("q");
     qInput.addEventListener("input", function (e) {
       query = e.target.value.trim();
-      render();
+      clearTimeout(renderTimer);
+      renderTimer = setTimeout(function () { render(); }, 120);
       renderSuggest();
       if (searchTimer) clearTimeout(searchTimer);
       searchTimer = setTimeout(function () {
@@ -497,10 +503,15 @@
     qInput.addEventListener("blur", function () {
       setTimeout(function () {
         var el = document.getElementById("suggest");
-        if (el) el.hidden = true;
+        if (el && !el.contains(document.activeElement)) el.hidden = true;
       }, 150);
     });
     qInput.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        document.getElementById("suggest").hidden = true;
+        return;
+      }
       if (e.key === "Enter") {
         var el = document.getElementById("suggest");
         if (el && !el.hidden && el.firstChild) {
@@ -517,8 +528,9 @@
     });
     Array.prototype.forEach.call(document.querySelectorAll(".chip:not(.small)"), function (chip) {
       chip.addEventListener("click", function () {
-        Array.prototype.forEach.call(document.querySelectorAll(".chip:not(.small)"), function (c) { c.classList.remove("on"); });
+        Array.prototype.forEach.call(document.querySelectorAll(".chip:not(.small)"), function (c) { c.classList.remove("on"); c.setAttribute("aria-pressed", "false"); });
         chip.classList.add("on");
+        chip.setAttribute("aria-pressed", "true");
         activeCat = chip.getAttribute("data-cat");
         render();
       });

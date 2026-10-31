@@ -543,7 +543,7 @@ async function pdfToText(buf){
 }
 async function fetchMenuText(u){
   const res = await fetch(u, {
-    headers: { "user-agent": "AntojoBot/0.1 (+https://github.com/lightsaber-design/restaurant)",
+    headers: { "user-agent": "AntojoBot/0.1 (+https://github.com/lightsaber-design/antojo)",
       "accept": "text/html,application/pdf,text/plain,*/*" },
     redirect: "follow", signal: AbortSignal.timeout(9000)
   });

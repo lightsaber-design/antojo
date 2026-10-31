@@ -82,4 +82,4 @@ Supabase: mismo modelo (base propia, cola por demanda), sin alta nueva y a
 
 - Elegir categoría y zona del piloto (sugerencias: ramen, hamburguesas o brunch en el centro de Dublín)
 - Encargar Fase 0 a Codex
-- Repositorio: https://github.com/lightsaber-design/restaurant (público, auditado sin secretos expuestos)
+- Repositorio: https://github.com/lightsaber-design/antojo (público, auditado sin secretos expuestos)

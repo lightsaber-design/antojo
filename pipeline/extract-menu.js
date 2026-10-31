@@ -85,7 +85,7 @@ function emite(lista) {
     texto = fs.readFileSync(0, "utf8");
     if (/<[a-z][\s\S]*>/i.test(texto)) texto = htmlToText(texto); // por si llega HTML en vez de texto plano
   } else {
-    const res = await fetch(url, { headers: { "user-agent": "AntojoBot/0.1 (+https://github.com/lightsaber-design/restaurant)" } });
+    const res = await fetch(url, { headers: { "user-agent": "AntojoBot/0.1 (+https://github.com/lightsaber-design/antojo)" } });
     if (!res.ok) { console.error("HTTP " + res.status + " en " + url); process.exit(1); }
     const tipo = res.headers.get("content-type") || "";
     if (tipo.includes("pdf")) {

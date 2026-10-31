@@ -63,7 +63,7 @@ function extractCandidates(text) {
 }
 async function fetchRaw(u) {
   const res = await fetch(u, {
-    headers: { "user-agent": "AntojoBot/0.1 (+https://github.com/lightsaber-design/restaurant)", accept: "text/html,*/*" },
+    headers: { "user-agent": "AntojoBot/0.1 (+https://github.com/lightsaber-design/antojo)", accept: "text/html,*/*" },
     redirect: "follow", signal: AbortSignal.timeout(9000),
   });
   if (!res.ok) throw new Error("HTTP " + res.status);

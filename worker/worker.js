@@ -115,6 +115,108 @@ function termCategory(nq){
   return ALIAS_CATEGORIA[nq] || null;
 }
 
+
+// --- Dedupe de platos (31 oct 2026): mismo plato, varias escrituras ---
+// Antes de insertar se compara con los platos del local: clave = tokens
+// ordenados, traducidos (ES/EN/IT/FR/JP romanizado) y sin articulos; dos
+// platos son el mismo si sus tokens casan uno a uno (exacto o errata de
+// edicion 1 en tokens de 4+ letras). Al fusionar, el precio/fecha/fuente del
+// duplicado se conserva en hist y gana la escritura mas limpia.
+const TOKEN_CANON = {};
+[["chicken",["chicken","pollo","poulet"]],
+ ["beef",["beef","ternera","boeuf","manzo","carne"]],
+ ["pork",["pork","cerdo","porc","maiale"]],
+ ["prawn",["prawn","prawns","gamba","gambas","shrimp","shrimps","ebi","crevette","crevettes","gamberi"]],
+ ["salmon",["salmon"]], ["tuna",["tuna","atun","thon","maguro"]],
+ ["fish",["fish","pescado","poisson","pesce"]],
+ ["rice",["rice","arroz","riz","riso","gohan"]],
+ ["noodle",["noodle","noodles","fideos","nouilles"]],
+ ["egg",["egg","eggs","huevo","huevos","oeuf","oeufs","uovo","uova","tamago"]],
+ ["cheese",["cheese","queso","fromage","formaggio"]],
+ ["veg",["vegetable","vegetables","verdura","verduras","legumes","verdure","yasai","veg"]],
+ ["spicy",["spicy","picante","epice","epicee","piccante"]],
+ ["crispy",["crispy","crujiente","crujientes","croustillant","croccante"]],
+ ["fried",["fried","frito","frita","frit","fritto","fritta"]],
+ ["grilled",["grilled","grill","plancha","grille","griglia"]],
+ ["roll",["roll","rolls","rollo"]],
+ ["salad",["salad","ensalada","salade","insalata"]],
+ ["soup",["soup","sopa","soupe","zuppa"]],
+ ["bread",["bread","pan","pain","pane"]],
+ ["potato",["potato","potatoes","patata","patatas","patate"]],
+ ["chips",["chips","fries"]],
+ ["sauce",["sauce","salsa"]],
+ ["burger",["burger","burgers"]], ["hamburger",["hamburger","hamburguesa","hamburguesas"]], ["cheeseburger",["cheeseburger"]],
+ ["dumpling",["dumpling","dumplings","gyoza","gyozas"]],
+ ["duck",["duck","pato","canard","anatra"]],
+ ["lamb",["lamb","cordero","agneau","agnello"]],
+ ["bacon",["bacon","pancetta","beicon"]],
+ ["octopus",["octopus","pulpo","poulpe","polpo","tako"]],
+ ["squid",["squid","calamari","calamar","calamares","ika"]],
+ ["seaweed",["seaweed","algas","wakame"]],
+ ["cake",["cake","tarta","gateau","torta"]],
+ ["sweet",["sweet","dulce","sucre","dolce"]]
+].forEach(([canon, arr]) => arr.forEach(w => { TOKEN_CANON[w] = canon; }));
+const STOPWORDS_DISH = new Set(["the","a","an","el","la","los","las","de","del","con","with","au","aux",
+  "di","al","alla","en","y","e","et","and","und","of","in","on","le","les","il","lo","i","gli","un","una","des","du"]);
+function dishKeyTokens(name){
+  const cleaned = norm(name).replace(/[\uFFFD\u0000-\u001F]/g, " ").replace(/[^a-z0-9ñ ]/g, " ");
+  return cleaned.split(/\s+/).filter(Boolean)
+    .map(t => TOKEN_CANON[t] || t)
+    .filter(t => !STOPWORDS_DISH.has(t) && (t.length > 1 || /\d/.test(t)))
+    .sort();
+}
+function tokensMatch(a, b){
+  if (!a.length || a.length !== b.length) return false;
+  const used = new Array(b.length).fill(false);
+  for (const t of a) {
+    let hit = -1;
+    for (let j = 0; j < b.length; j++) {
+      if (used[j]) continue;
+      if (b[j] === t || esTipoDe(t, b[j])) { hit = j; break; }
+    }
+    if (hit < 0) return false;
+    used[hit] = true;
+  }
+  return true;
+}
+function dishNameClean(n){
+  let s = 0;
+  for (const ch of n) { if (ch === "\uFFFD" || ch.charCodeAt(0) < 32) s -= 3; }
+  return s - n.length / 100;
+}
+// Inserta o fusiona: si el local ya tiene ese plato (escrito distinto),
+// actualiza esa fila y no crea duplicado. Devuelve "inserted"|"merged".
+async function upsertDish(env, venueId, name, price, src, ch, dcat, known){
+  const toks = dishKeyTokens(name);
+  const hit = (known || []).find(k => tokensMatch(k.toks, toks));
+  const note = "auto-extraido de la fuente oficial (bot, revision pendiente)";
+  if (hit) {
+    await env.DB.prepare(
+      "UPDATE dishes SET price=?, src=?, ch=?, chk=date('now'), note=?, dcat=?, updated_at=date('now') " +
+      "WHERE venue_id=? AND name=?"
+    ).bind(price, src, ch, note, dcat, venueId, hit.name).run();
+    return "merged";
+  }
+  await env.DB.prepare(
+    "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note,dcat) VALUES(?,?,?,?,?,date('now'),?,?) " +
+    "ON CONFLICT(venue_id,name) DO UPDATE SET price=excluded.price, src=excluded.src, " +
+    "ch=excluded.ch, chk=excluded.chk, note=excluded.note, dcat=excluded.dcat, updated_at=date('now')"
+  ).bind(venueId, name, price, src, ch, note, dcat).run();
+  if (known) known.push({ name, toks });
+  return "inserted";
+}
+async function venueDishKeys(env, venueId){
+  const { results } = await env.DB.prepare("SELECT name FROM dishes WHERE venue_id=?").bind(venueId).all();
+  return (results || []).map(r => ({ name: r.name, toks: dishKeyTokens(r.name) }));
+}
+function isJunkDishName(n){
+  if (/[\uFFFD\u0000-\u001F]/.test(n)) return true;
+  // Restos de etiquetas de alergenos: solo siglas en mayusculas con parentesis.
+  if (/[()]/.test(n) && !/[a-z]/.test(n) &&
+      n.split(/[^A-Z0-9]+/).filter(Boolean).every(w => w.length <= 3)) return true;
+  return false;
+}
+
 function venueCats(v){ try { return v.cats ? JSON.parse(v.cats) : [v.cat]; } catch(e){ return [v.cat]; } }
 // Distancia de edicion 1 entre terminos (letra cambiada, de mas o de menos):
 // los errores de tecleo de un termino conocido se fusionan con el y no se
@@ -506,18 +608,15 @@ async function investigateTerm(env, t, maxFetches){
   async function probeVenue(v){
     const got = await fetchMenuText(v.menu_url);
     const cands = extractCandidates(htmlToText(got.text));
-    // Auto-siembra: TODO plato de una carta oficial leida entra en la base
-    // con fuente/fecha/canal, aunque no sea el termino buscado (31 oct 2026).
+    // Auto-siembra con dedupe: TODO plato de una carta oficial leida entra en
+    // la base con fuente/fecha/canal; si el local ya lo tenia escrito distinto
+    // (otro idioma, errata, puntuacion), se fusiona y no duplica (31 oct 2026).
+    const known = await venueDishKeys(env, v.id);
     let added = 0, termHits = 0;
     for (const c of cands) {
-      if (c.name.length < 3) continue;
+      if (c.name.length < 3 || isJunkDishName(c.name)) continue;
       const hit = matchesQuery(c.name, v.name, venueCats(v), t.term);
-      await env.DB.prepare(
-        "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note,dcat) VALUES(?,?,?,?,?,date('now'),?,?) " +
-        "ON CONFLICT(venue_id,name) DO UPDATE SET price=excluded.price, src=excluded.src, " +
-        "ch=excluded.ch, chk=excluded.chk, note=excluded.note, dcat=excluded.dcat, updated_at=date('now')"
-      ).bind(v.id, c.name, c.price, v.menu_url, got.ch,
-        "auto-extraido de la fuente oficial (bot, revision pendiente)", dishCategory(c.name)).run();
+      await upsertDish(env, v.id, c.name, c.price, v.menu_url, got.ch, dishCategory(c.name), known);
       added++;
       if (hit) termHits++;
     }
@@ -580,14 +679,11 @@ async function revalidateBatch(env, limit){
       const got = await fetchMenuText(d.src);
       const text = htmlToText(got.text);
       const cands = extractCandidates(text);
-      // Auto-siembra tambien al revalidar: todo plato nuevo de la carta entra.
+      // Auto-siembra tambien al revalidar: todo plato nuevo entra, con dedupe.
+      const knownR = await venueDishKeys(env, d.venue_id);
       for (const c of cands) {
-        await env.DB.prepare(
-          "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note,dcat) VALUES(?,?,?,?,?,date('now'),?,?) " +
-          "ON CONFLICT(venue_id,name) DO UPDATE SET price=excluded.price, src=excluded.src, " +
-          "ch=excluded.ch, chk=excluded.chk, note=excluded.note, dcat=excluded.dcat, updated_at=date('now')"
-        ).bind(d.venue_id, c.name, c.price, d.src, got.ch,
-          "auto-extraido de la fuente oficial (bot, revision pendiente)", dishCategory(c.name)).run();
+        if (c.name.length < 3 || isJunkDishName(c.name)) continue;
+        await upsertDish(env, d.venue_id, c.name, c.price, d.src, got.ch, dishCategory(c.name), knownR);
       }
       const hit = cands.find(c => norm(c.name) === norm(d.name));
       if (hit) {

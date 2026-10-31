@@ -130,7 +130,7 @@ function rowToResult(r, ref){
   };
 }
 
-async function handleSearch(env, url){
+async function handleSearch(env, url, ctx){
   const q = (url.searchParams.get("q")||"").trim();
   const nq = norm(q);
   if (nq.length < 2) return json({ ok:true, results:[], queued:false });
@@ -166,16 +166,26 @@ async function handleSearch(env, url){
       "ON CONFLICT(term) DO UPDATE SET count=count+1, display=excluded.display, last_at=excluded.last_at"
     ).bind(nq, q, today).run();
   }
-  let queued = false;
+  let queued = false, investigating = false;
   if (vigentes.length === 0 && !conocido) {
-    // Encargo: se investiga en fuentes oficiales (cron), primero lo mas buscado
+    // Encargo: se investiga AHORA en segundo plano (fuentes oficiales gratuitas)
+    // y el cron cada 2 h queda de refuerzo. Primero lo mas buscado.
     const s = await env.DB.prepare("SELECT count FROM searches WHERE term=?").bind(nq).first();
+    const prev = await env.DB.prepare("SELECT status, updated_at FROM queue WHERE term=?").bind(nq).first();
     await env.DB.prepare(
       "INSERT INTO queue(term,display,priority,status) VALUES(?,?,?,'pending') " +
       "ON CONFLICT(term) DO UPDATE SET priority=excluded.priority, display=excluded.display, " +
-      "status=CASE WHEN queue.status='done' THEN 'pending' ELSE queue.status END, updated_at=date('now')"
+      "status=CASE WHEN queue.status IN ('done','needs_review') THEN 'pending' ELSE queue.status END, updated_at=date('now')"
     ).bind(nq, q, (s && s.count) || 1).run();
     queued = true;
+    // Disparo inmediato si hoy no se ha investigado ya este termino (evita
+    // relanzar en cada busqueda repetida el mismo dia). Como mucho 1 termino
+    // por peticion, pocas cartas por termino: coste cero y rapido.
+    if (ctx && (!prev || prev.updated_at !== today)) {
+      investigating = true;
+      ctx.waitUntil(investigateTerm(env, { term: nq, display: q, attempts: 0 }, 25)
+        .catch(() => null));
+    }
   }
   // Locales registrados que encajan con la busqueda (nombre o categoria) pero
   // sin platos verificados todavia: se muestran como "carta pendiente" para
@@ -193,7 +203,7 @@ async function handleSearch(env, url){
       has_dishes: !!dishCountByVenue[v.id] }));
   venueMatches.sort((a,b) => a.km - b.km);
   venueMatches = venueMatches.slice(0, 25);
-  return json({ ok:true, results: cut, venue_matches: venueMatches, queued, correction: conocido ? conocido.term : null });
+  return json({ ok:true, results: cut, venue_matches: venueMatches, queued, investigating, correction: conocido ? conocido.term : null });
 }
 
 async function handleSuggest(env, url){
@@ -283,48 +293,65 @@ async function collectBatch(env, maxTerms){
   ).bind(maxTerms || 3).all();
   const report = [];
   for (const t of terms) {
-    const { results: venues } = await env.DB.prepare(
-      "SELECT id, name, cat, cats, menu_url FROM venues WHERE menu_url IS NOT NULL"
-    ).all();
-    // Candidatos: primero locales cuya categoria encaja con el termino; limite 6 fetches por termino
-    const scored = venues.map(v => {
-      const hay = norm(v.name + " " + venueCats(v).join(" "));
-      const toks = norm(t.term).split(/\s+/).filter(Boolean);
-      const hit = toks.some(tok => terminosDe(tok).some(term => wordMatch(hay, term)));
-      return { v, score: hit ? 1 : 0 };
-    }).sort((a,b) => b.score - a.score);
-    let found = 0, fetched = 0, lastErr = null;
-    for (const { v } of scored) {
-      if (fetched >= 6 || found >= 8) break;
-      fetched++;
-      try {
-        const text = htmlToText(await fetchMenuText(v.menu_url));
-        const cands = extractCandidates(text);
-        for (const c of cands) {
-          if (!matchesQuery(c.name, v.name, venueCats(v), t.term)) continue;
-          await env.DB.prepare(
-            "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note) VALUES(?,?,?,?,?,date('now'),?) " +
-            "ON CONFLICT(venue_id,name) DO UPDATE SET price=excluded.price, src=excluded.src, " +
-            "ch=excluded.ch, chk=excluded.chk, note=excluded.note, updated_at=date('now')"
-          ).bind(v.id, c.name, c.price, v.menu_url, "carta", "extraido de la carta oficial (bot, revision pendiente)").run();
-          found++;
-        }
-      } catch (e) { lastErr = String(e && e.message || e); }
-    }
-    if (found > 0) {
-      await env.DB.prepare("UPDATE queue SET status='done', note=?, updated_at=date('now') WHERE term=?")
-        .bind(found + " plato(s) encontrados en cartas oficiales", t.term).run();
-    } else {
-      const attempts = (t.attempts || 0) + 1;
-      const status = attempts >= 3 ? "needs_review" : "pending";
-      await env.DB.prepare("UPDATE queue SET status=?, attempts=?, note=?, updated_at=date('now') WHERE term=?")
-        .bind(status, attempts,
-          "sin coincidencias en " + fetched + " cartas oficiales" + (lastErr ? "; ultimo error: " + lastErr : "") +
-          (status === "needs_review" ? "; ampliar el registro de locales" : ""), t.term).run();
-    }
-    report.push({ term: t.display, fetched, found });
+    report.push(await investigateTerm(env, t));
   }
   return report;
+}
+// Investiga UN termino en las cartas oficiales registradas (fuentes gratuitas:
+// carta web, PDF, pedido online; nunca APIs de pago). Lo usan el cron cada 2 h
+// y el disparo inmediato cuando una busqueda no encuentra nada (31 oct 2026).
+async function investigateTerm(env, t, maxFetches){
+  const cap = maxFetches || 6;
+  const { results: venues } = await env.DB.prepare(
+    "SELECT id, name, cat, cats, menu_url FROM venues WHERE menu_url IS NOT NULL"
+  ).all();
+  // Candidatos: primero locales cuya categoria encaja con el termino.
+  const scored = venues.map(v => {
+    const hay = norm(v.name + " " + venueCats(v).join(" "));
+    const toks = norm(t.term).split(/\s+/).filter(Boolean);
+    const hit = toks.some(tok => terminosDe(tok).some(term => wordMatch(hay, term)));
+    return { v, score: hit ? 1 : 0 };
+  }).sort((a,b) => b.score - a.score);
+  let found = 0, fetched = 0, lastErr = null;
+  async function probeVenue(v){
+    const text = htmlToText(await fetchMenuText(v.menu_url));
+    const cands = extractCandidates(text);
+    let n = 0;
+    for (const c of cands) {
+      if (!matchesQuery(c.name, v.name, venueCats(v), t.term)) continue;
+      await env.DB.prepare(
+        "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note) VALUES(?,?,?,?,?,date('now'),?) " +
+        "ON CONFLICT(venue_id,name) DO UPDATE SET price=excluded.price, src=excluded.src, " +
+        "ch=excluded.ch, chk=excluded.chk, note=excluded.note, updated_at=date('now')"
+      ).bind(v.id, c.name, c.price, v.menu_url, "carta", "extraido de la carta oficial (bot, revision pendiente)").run();
+      n++;
+    }
+    return n;
+  }
+  // Fetches en paralelo de 5 en 5: el disparo inmediato cubre mas cartas
+  // (cap mas alto) sin alargar la espera de quien busca.
+  const queueV = scored.map(s => s.v);
+  while (queueV.length && fetched < cap && found < 8) {
+    const chunk = queueV.splice(0, Math.min(5, cap - fetched));
+    fetched += chunk.length;
+    const rs = await Promise.allSettled(chunk.map(probeVenue));
+    for (const r of rs) {
+      if (r.status === "fulfilled") found += r.value;
+      else lastErr = String(r.reason && r.reason.message || r.reason);
+    }
+  }
+  if (found > 0) {
+    await env.DB.prepare("UPDATE queue SET status='done', note=?, updated_at=date('now') WHERE term=?")
+      .bind(found + " plato(s) encontrados en cartas oficiales", t.term).run();
+  } else {
+    const attempts = (t.attempts || 0) + 1;
+    const status = attempts >= 3 ? "needs_review" : "pending";
+    await env.DB.prepare("UPDATE queue SET status=?, attempts=?, note=?, updated_at=date('now') WHERE term=?")
+      .bind(status, attempts,
+        "sin coincidencias en " + fetched + " cartas oficiales" + (lastErr ? "; ultimo error: " + lastErr : "") +
+        (status === "needs_review" ? "; ampliar el registro de locales" : ""), t.term).run();
+  }
+  return { term: t.display, fetched, found };
 }
 async function revalidateBatch(env, limit){
   const { results: stale } = await env.DB.prepare(
@@ -386,11 +413,11 @@ async function handlePlaces(env, url){
 }
 
 export default {
-  async fetch(request, env){
+  async fetch(request, env, ctx){
     const url = new URL(request.url);
     if (request.method === "OPTIONS") return json({});
     try {
-      if (url.pathname === "/api/search") return await handleSearch(env, url);
+      if (url.pathname === "/api/search") return await handleSearch(env, url, ctx);
       if (url.pathname === "/api/suggest") return await handleSuggest(env, url);
       if (url.pathname === "/api/stats") return await handleStats(env);
       if (url.pathname === "/api/queue") return await handleQueue(env);

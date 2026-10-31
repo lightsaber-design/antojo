@@ -30,6 +30,7 @@
   var API_BASE = "https://antojo-api.caroldenissetorres.workers.dev";
   var liveRows = null, liveQuery = null, liveState = "local", liveCorrection = null;
   var liveSeq = 0, apiSuggest = [];
+  var investRetries = {};
   // 31 oct 2026 (5a iteracion, a peticion de Carol):
 //  - las categorias (chips) AHORA fijan la busqueda: al tocar Sushi se busca
 //    "sushi" de verdad (antes solo filtraban datos locales y el mapa nunca
@@ -370,9 +371,11 @@
     if (currentMiss) {
       if (liveState === "queued") {
         html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
-          "El backend ya lo tiene encargado: se investiga en las cartas oficiales de los locales " +
-          "registrados (cada 2 h, primero lo más buscado) y aparecerá aquí con fuente, fecha y canal. " +
-          "Si ningún local registrado lo sirve, queda pendiente de ampliar el registro de locales.</div>";
+          "Se está investigando ahora mismo en las cartas oficiales de los locales registrados: " +
+          "esta búsqueda se actualiza sola en unos segundos y lo que encuentre queda guardado " +
+          "con fuente, fecha y canal. (De refuerzo, un cron repasa los encargos cada 2 h, " +
+          "primero lo más buscado.) Si ningún local registrado lo sirve, queda pendiente de " +
+          "ampliar el registro de locales.</div>";
       } else if (liveState === "offline") {
         html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
           "Queda encargado: se investiga en fuentes oficiales (carta web, PDF de carta, pedido online) " +
@@ -467,6 +470,16 @@
         lastSearchCenter = { lat: ref.lat, lon: ref.lon };
         render();
         if (fit !== false) fitMapToRows(flatDishes());
+        // El backend investiga ahora mismo (fuentes oficiales gratuitas):
+        // reintenta una vez a los 8 s y los platos aparecen solos.
+        if (j.investigating && investRetries[nq] === undefined) investRetries[nq] = 0;
+        if ((j.investigating || (j.queued && investRetries[nq] === 1)) && investRetries[nq] < 2) {
+          var delay = investRetries[nq] === 0 ? 10000 : 20000;
+          investRetries[nq]++;
+          setTimeout(function () {
+            if (norm(query).trim() === nq) fetchLive(query, false);
+          }, delay);
+        }
       })
       .catch(function () {
         clearTimeout(to);

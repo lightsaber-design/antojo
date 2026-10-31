@@ -186,22 +186,23 @@ function dishNameClean(n){
 }
 // Inserta o fusiona: si el local ya tiene ese plato (escrito distinto),
 // actualiza esa fila y no crea duplicado. Devuelve "inserted"|"merged".
-async function upsertDish(env, venueId, name, price, src, ch, dcat, known){
+async function upsertDish(env, venueId, name, price, src, ch, dcat, known, registry){
   const toks = dishKeyTokens(name);
   const hit = (known || []).find(k => tokensMatch(k.toks, toks));
   const note = "auto-extraido de la fuente oficial (bot, revision pendiente)";
+  const canon = registry ? await canonAssign(env, registry, name) : null;
   if (hit) {
     await env.DB.prepare(
-      "UPDATE dishes SET price=?, src=?, ch=?, chk=date('now'), note=?, dcat=?, updated_at=date('now') " +
+      "UPDATE dishes SET price=?, src=?, ch=?, chk=date('now'), note=?, dcat=?, canon=COALESCE(?,canon), updated_at=date('now') " +
       "WHERE venue_id=? AND name=?"
-    ).bind(price, src, ch, note, dcat, venueId, hit.name).run();
+    ).bind(price, src, ch, note, dcat, canon, venueId, hit.name).run();
     return "merged";
   }
   await env.DB.prepare(
-    "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note,dcat) VALUES(?,?,?,?,?,date('now'),?,?) " +
+    "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note,dcat,canon) VALUES(?,?,?,?,?,date('now'),?,?,?) " +
     "ON CONFLICT(venue_id,name) DO UPDATE SET price=excluded.price, src=excluded.src, " +
-    "ch=excluded.ch, chk=excluded.chk, note=excluded.note, dcat=excluded.dcat, updated_at=date('now')"
-  ).bind(venueId, name, price, src, ch, note, dcat).run();
+    "ch=excluded.ch, chk=excluded.chk, note=excluded.note, dcat=excluded.dcat, canon=COALESCE(excluded.canon,dishes.canon), updated_at=date('now')"
+  ).bind(venueId, name, price, src, ch, note, dcat, canon).run();
   if (known) known.push({ name, toks });
   return "inserted";
 }
@@ -215,6 +216,49 @@ function isJunkDishName(n){
   if (/[()]/.test(n) && !/[a-z]/.test(n) &&
       n.split(/[^A-Z0-9]+/).filter(Boolean).every(w => w.length <= 3)) return true;
   return false;
+}
+
+// --- Capa canonica de platos (31 oct 2026): un plato = un concepto ---
+// dish_canon(key, name, toks, aliases): la clave son los tokens canonicos
+// ordenados, asi que "Pollo teriyaki" y "Chicken Teriyaki" en locales
+// distintos comparten canon. Las erratas (sushi/suchi/susi) se fusionan por
+// distancia de edicion 1 al buscar la clave. Los precios quedan por local.
+function canonKey(toks){ return toks.join("-"); }
+async function canonRegistry(env){
+  try {
+    const { results } = await env.DB.prepare("SELECT key, name, toks FROM dish_canon").all();
+    return (results || []).map(r => ({ key: r.key, name: r.name, toks: JSON.parse(r.toks) }));
+  } catch(e){ return []; }
+}
+function canonLookup(registry, toks){
+  if (!toks.length) return null;
+  const exact = canonKey(toks);
+  const hit = registry.find(c => c.key === exact) || registry.find(c => tokensMatch(c.toks, toks));
+  return hit || null;
+}
+async function canonAssign(env, registry, name){
+  if (isJunkDishName(name)) return null;
+  const toks = dishKeyTokens(name);
+  if (!toks.length) return null;
+  const hit = canonLookup(registry, toks);
+  if (hit) {
+    // Guardar la escritura vista como alias (dedupe, tope 20).
+    try {
+      await env.DB.prepare(
+        "UPDATE dish_canon SET aliases = (SELECT json_group_array(DISTINCT value) FROM (" +
+        "SELECT value FROM json_each(dish_canon.aliases) UNION SELECT ?)) WHERE key=? AND " +
+        "NOT EXISTS (SELECT 1 FROM json_each(dish_canon.aliases) WHERE value=?)"
+      ).bind(name, hit.key, name).run();
+    } catch(e){}
+    return hit.key;
+  }
+  const key = canonKey(toks);
+  try {
+    await env.DB.prepare("INSERT OR IGNORE INTO dish_canon(key,name,toks,aliases) VALUES(?,?,?,?)")
+      .bind(key, name.trim(), JSON.stringify(toks), JSON.stringify([name.trim()])).run();
+    registry.push({ key, name: name.trim(), toks });
+  } catch(e){}
+  return key;
 }
 
 function venueCats(v){ try { return v.cats ? JSON.parse(v.cats) : [v.cat]; } catch(e){ return [v.cat]; } }
@@ -304,8 +348,19 @@ async function handleSearch(env, url, ctx){
     "SELECT d.*, v.name vname, v.address, v.lat, v.lon, v.rating, v.reviews, v.band, v.cat, v.cats, v.source vsource " +
     "FROM dishes d JOIN venues v ON v.id = d.venue_id"
   ).all();
-  const catQ = termCategory(nq);
-  let rows = results.filter(r => dishMatches(r.name, q) || (catQ && r.dcat === catQ))
+  // Erratas de un termino conocido (sushi/suchi/susi): se busca con el
+  // termino correcto; la errata solo suma al contador del conocido.
+  const { results: previas } = await env.DB.prepare("SELECT term FROM searches").all();
+  const conocido = (previas || []).find(s => esTipoDe(nq, s.term));
+  const qEff = conocido ? conocido.term : q;
+  const catQ = termCategory(norm(qEff));
+  // Canon: el termino casa con conceptos canonicos (traducciones + erratas),
+  // y eso trae TODOS los platos de ese concepto en cualquier local.
+  const registryS = await canonRegistry(env);
+  const qtoks = dishKeyTokens(qEff);
+  const canonHit = canonLookup(registryS, qtoks);
+  let rows = results.filter(r => dishMatches(r.name, qEff) || (catQ && r.dcat === catQ) ||
+                                 (canonHit && r.canon === canonHit.key))
                     .map(r => rowToResult(r, ref));
   rows.sort((a,b) => {
     const ap = a.dish.price, bp = b.dish.price;
@@ -320,8 +375,6 @@ async function handleSearch(env, url, ctx){
   const vigentes = rows.filter(x => x.dish.price != null && daysSince(x.dish.chk) <= FRESH_DAYS);
   // Registrar la busqueda (alimenta "primero lo mas buscado"). Si el termino
   // es un error de tecleo de uno conocido, suma al conocido y no crea entrada.
-  const { results: previas } = await env.DB.prepare("SELECT term FROM searches").all();
-  const conocido = (previas || []).find(s => esTipoDe(nq, s.term));
   if (conocido) {
     await env.DB.prepare("UPDATE searches SET count=count+1, last_at=? WHERE term=?").bind(today, conocido.term).run();
   } else {
@@ -373,10 +426,20 @@ async function handleSearch(env, url, ctx){
 async function handleSuggest(env, url){
   const q = norm((url.searchParams.get("q")||"").trim());
   if (q.length < 2) return json({ ok:true, suggestions: [] });
-  const { results } = await env.DB.prepare(
-    "SELECT DISTINCT name FROM dishes WHERE lower(name) LIKE ? ORDER BY length(name) LIMIT 7"
-  ).bind("%" + q + "%").all();
-  return json({ ok:true, suggestions: results.map(r => r.name) });
+  let sug = [];
+  try {
+    const { results: can } = await env.DB.prepare(
+      "SELECT name FROM dish_canon WHERE lower(name) LIKE ? OR lower(aliases) LIKE ? ORDER BY length(name) LIMIT 7"
+    ).bind("%" + q + "%", "%" + q + "%").all();
+    sug = (can || []).map(r => r.name);
+  } catch(e){}
+  if (!sug.length) {
+    const { results } = await env.DB.prepare(
+      "SELECT DISTINCT name FROM dishes WHERE lower(name) LIKE ? ORDER BY length(name) LIMIT 7"
+    ).bind("%" + q + "%").all();
+    sug = results.map(r => r.name);
+  }
+  return json({ ok:true, suggestions: sug });
 }
 
 
@@ -391,10 +454,12 @@ async function handleCategories(env){
 async function handleStats(env){
   const v = await env.DB.prepare("SELECT COUNT(*) n FROM venues").first();
   const d = await env.DB.prepare("SELECT COUNT(*) n FROM dishes").first();
+  let canonN = 0;
+  try { const c = await env.DB.prepare("SELECT COUNT(*) n FROM dish_canon").first(); canonN = (c && c.n) || 0; } catch(e){}
   const stale = await env.DB.prepare("SELECT COUNT(*) n FROM dishes WHERE chk < date('now','-90 days')").first();
   const q = await env.DB.prepare("SELECT COUNT(*) n FROM queue WHERE status='pending'").first();
   const top = await env.DB.prepare("SELECT display, count FROM searches ORDER BY count DESC LIMIT 5").all();
-  return json({ ok:true, venues: v.n, dishes: d.n, stale_90d: stale.n, queue_pending: q.n,
+  return json({ ok:true, venues: v.n, dishes: d.n, canonical_dishes: canonN, stale_90d: stale.n, queue_pending: q.n,
     most_searched: top.results });
 }
 async function handleQueue(env){
@@ -612,11 +677,12 @@ async function investigateTerm(env, t, maxFetches){
     // la base con fuente/fecha/canal; si el local ya lo tenia escrito distinto
     // (otro idioma, errata, puntuacion), se fusiona y no duplica (31 oct 2026).
     const known = await venueDishKeys(env, v.id);
+    const registry = await canonRegistry(env);
     let added = 0, termHits = 0;
     for (const c of cands) {
       if (c.name.length < 3 || isJunkDishName(c.name)) continue;
       const hit = matchesQuery(c.name, v.name, venueCats(v), t.term);
-      await upsertDish(env, v.id, c.name, c.price, v.menu_url, got.ch, dishCategory(c.name), known);
+      await upsertDish(env, v.id, c.name, c.price, v.menu_url, got.ch, dishCategory(c.name), known, registry);
       added++;
       if (hit) termHits++;
     }
@@ -681,9 +747,10 @@ async function revalidateBatch(env, limit){
       const cands = extractCandidates(text);
       // Auto-siembra tambien al revalidar: todo plato nuevo entra, con dedupe.
       const knownR = await venueDishKeys(env, d.venue_id);
+      const registryR = await canonRegistry(env);
       for (const c of cands) {
         if (c.name.length < 3 || isJunkDishName(c.name)) continue;
-        await upsertDish(env, d.venue_id, c.name, c.price, d.src, got.ch, dishCategory(c.name), knownR);
+        await upsertDish(env, d.venue_id, c.name, c.price, d.src, got.ch, dishCategory(c.name), knownR, registryR);
       }
       const hit = cands.find(c => norm(c.name) === norm(d.name));
       if (hit) {

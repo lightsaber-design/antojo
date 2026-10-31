@@ -28,7 +28,7 @@
   // Backend Fase 1 (Worker + D1): la demo consulta primero la base propia en
   // vivo; si la API no responde, cae a los datos locales (data.js) y lo dice.
   var API_BASE = "https://antojo-api.caroldenissetorres.workers.dev";
-  var liveRows = null, liveQuery = null, liveState = "local", liveCorrection = null;
+  var liveRows = null, liveQuery = null, liveState = "local", liveCorrection = null, liveInvestigating = false;
   var liveSeq = 0, apiSuggest = [];
   var investRetries = {};
   // 31 oct 2026 (5a iteracion, a peticion de Carol):
@@ -370,12 +370,18 @@
     var html = "";
     if (currentMiss) {
       if (liveState === "queued") {
-        html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
-          "Se está investigando ahora mismo en las cartas oficiales de los locales registrados: " +
-          "esta búsqueda se actualiza sola en unos segundos y lo que encuentre queda guardado " +
-          "con fuente, fecha y canal. (De refuerzo, un cron repasa los encargos cada 2 h, " +
-          "primero lo más buscado.) Si ningún local registrado lo sirve, queda pendiente de " +
-          "ampliar el registro de locales.</div>";
+        if (liveInvestigating) {
+          html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
+            "Se está investigando ahora mismo en las cartas oficiales de los locales registrados: " +
+            "esta búsqueda se actualiza sola en unos segundos y lo que encuentre queda guardado " +
+            "con fuente, fecha y canal.</div>";
+        } else {
+          html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
+            "Hoy ya se buscó en las cartas oficiales de los locales registrados y no apareció. " +
+            "Queda encargado: un cron lo reintenta cada 2 h (primero lo más buscado) y, si aparece, " +
+            "se guarda con fuente, fecha y canal. Si ningún local registrado lo sirve, queda " +
+            "pendiente de ampliar el registro de locales.</div>";
+        }
       } else if (liveState === "offline") {
         html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
           "Queda encargado: se investiga en fuentes oficiales (carta web, PDF de carta, pedido online) " +
@@ -467,6 +473,7 @@
         liveRows = (j.results || []).concat(j.venue_matches || []);
         liveQuery = nq; liveState = j.queued ? "queued" : "ok";
         liveCorrection = j.correction || null;
+        liveInvestigating = !!j.investigating;
         lastSearchCenter = { lat: ref.lat, lon: ref.lon };
         render();
         if (fit !== false) fitMapToRows(flatDishes());

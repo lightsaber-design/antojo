@@ -31,6 +31,13 @@
   var API_BASE = "https://antojo-api.caroldenissetorres.workers.dev";
   var liveRows = null, liveQuery = null, liveState = "local";
   var liveSeq = 0, apiSuggest = [];
+  // 31 oct 2026 (4a iteracion, a peticion de Carol): busqueda interactiva.
+  // Boton persistente "Buscar de nuevo" y auto-busqueda de la misma query al
+  // mover/zoom del mapa (busca en la zona visible, no solo en el centro fijo
+  // de Dublin), todo sin recargar la pagina.
+  var mapMoveTimer = null;        // debounce del auto-search al mover el mapa
+  var suppressMapMove = false;    // los movimientos programados (fitBounds/flyTo) no disparan busqueda
+  var lastSearchCenter = null;    // para no rebuscar si el centro apenas se movio
 
   function norm(s) {
     return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
@@ -233,11 +240,13 @@
     if (activeCat !== "todo") {
       out = out.filter(function (x) { return venueCats(x.venue).indexOf(activeCat) >= 0; });
     }
+    function precioDe(x) { return x.dish ? x.dish.price : null; }
     if (sortBy === "precio") out.sort(function (a, b) {
-      if (a.dish.price == null && b.dish.price == null) return a.km - b.km;
-      if (a.dish.price == null) return 1;
-      if (b.dish.price == null) return -1;
-      return a.dish.price - b.dish.price;
+      var ap = precioDe(a), bp = precioDe(b);
+      if (ap == null && bp == null) return a.km - b.km;
+      if (ap == null) return 1;
+      if (bp == null) return -1;
+      return ap - bp;
     });
     else if (sortBy === "valoracion") out.sort(function (a, b) { return (b.venue.rating || 0) - (a.venue.rating || 0); });
     else out.sort(function (a, b) { return a.km - b.km; });
@@ -250,7 +259,7 @@
     if (q.length < 2) return null;
     // Solo platos cuyo NOMBRE coincide con la busqueda (no locales que coinciden por nombre).
     var priced = rows.filter(function (x) {
-      return x.dish.price != null && freshState(x.dish) !== "stale" && norm(x.dish.name).indexOf(q) >= 0;
+      return x.dish && x.dish.price != null && freshState(x.dish) !== "stale" && norm(x.dish.name).indexOf(q) >= 0;
     });
     var byVenue = {};
     priced.forEach(function (x) {
@@ -383,7 +392,7 @@
   // Consulta en vivo a la API (base propia): si no hay el plato, el backend
   // lo encarga e investiga en cartas oficiales (cron cada 2 h, lo mas buscado
   // primero). Solo cuentan las respuestas de la busqueda actual.
-  function fetchLive(q) {
+  function fetchLive(q, fit) {
     var nq = norm(q).trim();
     if (nq.length < 3) { liveRows = null; liveQuery = null; liveState = "local"; return; }
     var seq = ++liveSeq;
@@ -395,8 +404,11 @@
         clearTimeout(to);
         if (seq !== liveSeq || norm(query).trim() !== nq) return;
         if (!j.ok) throw new Error("api");
-        liveRows = j.results; liveQuery = nq; liveState = j.queued ? "queued" : "ok";
+        liveRows = (j.results || []).concat(j.venue_matches || []);
+        liveQuery = nq; liveState = j.queued ? "queued" : "ok";
+        lastSearchCenter = { lat: ref.lat, lon: ref.lon };
         render();
+        if (fit !== false) fitMapToRows(flatDishes());
       })
       .catch(function () {
         clearTimeout(to);
@@ -420,24 +432,48 @@
 
   function render() {
     var rows = flatDishes();
+    var dishRows = rows.filter(function (x) { return x.dish; });
+    var soloLocales = rows.length - dishRows.length;
     var comp = comparison(rows);
     renderCompare(comp);
     var el = document.getElementById("results");
-    var verificados = rows.filter(function (x) { var s = freshState(x.dish); return s === "fresh" || s === "soon"; }).length;
-    var obsoletos = rows.filter(function (x) { return freshState(x.dish) === "stale"; }).length;
+    var verificados = dishRows.filter(function (x) { var s = freshState(x.dish); return s === "fresh" || s === "soon"; }).length;
+    var obsoletos = dishRows.filter(function (x) { return freshState(x.dish) === "stale"; }).length;
     var canalDatos = liveState === "ok" || liveState === "queued"
       ? " · base en vivo (API)"
       : (norm(query).trim().length >= 3 ? " · datos locales (API no disponible)" : "");
     document.getElementById("count").textContent =
-      rows.length + (rows.length === 1 ? " plato" : " platos") + " cerca de " + ref.label +
+      dishRows.length + (dishRows.length === 1 ? " plato" : " platos") + " cerca de " + ref.label +
+      (soloLocales ? " + " + soloLocales + (soloLocales === 1 ? " local" : " locales") + " con carta pendiente" : "") +
       " · " + verificados + " con precio verificado" +
       (obsoletos ? " · " + obsoletos + " sin revalidar (>" + FRESH + " días)" : "") +
       canalDatos;
-    renderEncargos(query.trim().length >= 3 && rows.length === 0 ? query : null);
+    renderEncargos(query.trim().length >= 3 && dishRows.length === 0 && soloLocales === 0 ? query : null);
     el.innerHTML = "";
     rows.forEach(function (x) {
-      var st = freshState(x.dish);
       var card = document.createElement("article");
+      var ratingHtml = x.venue.rating == null
+        ? "<span>★ nuevo en Antojo</span>"
+        : "<span>★ " + x.venue.rating.toFixed(1) + " (" + x.venue.reviews + ")</span>";
+      var bandHtml = x.venue.band ? "<span>" + esc(x.venue.band) + "</span>" : "";
+      if (!x.dish) {
+        // Local registrado que encaja con la busqueda pero sin carta verificada
+        // todavia (cobertura OpenStreetMap, 31 oct 2026): se muestra como
+        // "carta pendiente" y el backend la investiga (cola + cron).
+        card.className = "card venue-only";
+        card.innerHTML =
+          '<div class="dish">🍽 ' + esc(x.venue.name) + "</div>" +
+          '<div class="venue">' + esc(x.venue.address || "Dublín") + "</div>" +
+          '<div class="meta">' +
+            "<span>📍 " + fmtKm(x.km) + "</span>" +
+            ratingHtml +
+            bandHtml +
+          "</div>" +
+          '<div class="verify no">carta pendiente de investigación · se añadirá con fuente, fecha y canal</div>';
+        el.appendChild(card);
+        return;
+      }
+      var st = freshState(x.dish);
       card.className = "card";
       var precioHtml;
       if (x.dish.price == null) {
@@ -447,16 +483,13 @@
       } else {
         precioHtml = '<span class="price">' + fmtEur(x.dish.price) + "</span>";
       }
-      var ratingHtml = x.venue.rating == null
-        ? "<span>★ nuevo en Antojo</span>"
-        : "<span>★ " + x.venue.rating.toFixed(1) + " (" + x.venue.reviews + ")</span>";
       card.innerHTML =
         '<div class="dish">' + esc(x.dish.name) + " " + precioHtml + "</div>" +
         '<div class="venue">' + esc(x.venue.name) + " · " + esc(x.venue.address) + "</div>" +
         '<div class="meta">' +
           "<span>📍 " + fmtKm(x.km) + "</span>" +
           ratingHtml +
-          "<span>" + esc(x.venue.band) + "</span>" +
+          bandHtml +
         "</div>" +
         verifLine(x.dish) +
         histLine(x.dish);
@@ -479,6 +512,22 @@
       zoom: 14
     });
     map.addControl(new maplibregl.NavigationControl(), "top-right");
+    // Al mover o hacer zoom en el mapa, se busca la MISMA query en la zona
+    // visible (debounce 700 ms, sin recargar la pagina). Los movimientos
+    // programados (fitBounds/flyTo) no disparan busqueda.
+    map.on("moveend", function () {
+      if (suppressMapMove) { suppressMapMove = false; return; }
+      var c = map.getCenter();
+      var centro = { lat: c.lat, lon: c.lng };
+      ref = { lat: c.lat, lon: c.lng, label: "la zona del mapa" };
+      if (norm(query).trim().length < 3) { render(); return; } // solo recentra las distancias
+      if (lastSearchCenter && haversineKm(lastSearchCenter, centro) < 0.25) { render(); return; }
+      if (mapMoveTimer) clearTimeout(mapMoveTimer);
+      mapMoveTimer = setTimeout(function () {
+        fetchLive(query, false);
+        render();
+      }, 700);
+    });
   }
 
   function updateMap(rows, comp) {
@@ -519,10 +568,17 @@
       }
       markers.push(m);
     });
+  }
+
+  // Encuadre del mapa: SOLO en busquedas nuevas (texto o carga inicial), nunca
+  // cuando la busqueda la dispara el propio movimiento del mapa.
+  function fitMapToRows(rows) {
+    if (!map) return;
     var pts = rows.map(function (x) { return [x.venue.lon, x.venue.lat]; });
     pts.push([ref.lon, ref.lat]);
     if (pts.length > 1) {
       var bounds = pts.reduce(function (b, p) { return b.extend(p); }, new maplibregl.LngLatBounds(pts[0], pts[0]));
+      suppressMapMove = true;
       map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 400 });
     }
   }
@@ -530,12 +586,13 @@
   function setRef(lat, lon, label) {
     ref = { lat: lat, lon: lon, label: label };
     render();
-    if (map) map.flyTo({ center: [lon, lat], zoom: 14 });
+    if (map) { suppressMapMove = true; map.flyTo({ center: [lon, lat], zoom: 14 }); }
   }
 
   document.addEventListener("DOMContentLoaded", function () {
     initMap();
     render();
+    fitMapToRows(flatDishes());
     renderTopSearches();
 
     var qInput = document.getElementById("q");
@@ -584,6 +641,21 @@
         activeCat = chip.getAttribute("data-cat");
         render();
       });
+    });
+    document.getElementById("redo").addEventListener("click", function () {
+      // Boton persistente: repite la busqueda actual en la zona visible del
+      // mapa (o en la referencia activa), sin recargar la pagina.
+      var b = this;
+      b.disabled = true;
+      b.textContent = "🔄 Buscando…";
+      if (map) {
+        var c = map.getCenter();
+        ref = { lat: c.lat, lon: c.lng, label: "la zona del mapa" };
+      }
+      liveRows = null; liveQuery = null; // fuerza consulta fresca a la API
+      fetchLive(query, false);
+      render();
+      setTimeout(function () { b.disabled = false; b.textContent = "🔄 Buscar de nuevo"; }, 1200);
     });
     document.getElementById("geo").addEventListener("click", function () {
       if (!navigator.geolocation) { setRef(DUBLIN_CENTER.lat, DUBLIN_CENTER.lon, "Centro de Dublín"); return; }

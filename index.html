@@ -15,14 +15,17 @@
 </header>
 
 <div class="banner">
-  Piloto: hamburguesas, ramen, sushi y brunch del centro de Dublín con precios
-  reales verificados el 30 oct 2026, cada uno de un plato concreto con su fuente
-  y canal (carta oficial, pedido online, Deliveroo o carta de terceros). Escribe
-  un plato (ej. «sushi», «cheeseburger») y salen todas las opciones, cada una
-  con su precio; el mapa las colorea por precio. Las sugerencias salen de platos
-  reales, y lo que busques y no esté queda encargado para investigación. Banyi
-  cerró en nov 2025: en su dirección de Bedford Row abrió Izushi. Regla Antojo:
-  revalidar cada 90 días, primero lo más buscado; la ficha avisa sola.
+  Piloto: hamburguesas, ramen, sushi y brunch con precios reales verificados,
+  cada uno de un plato concreto con su fuente y canal (carta oficial, pedido
+  online, Deliveroo o carta de terceros). Cobertura de locales de todo el
+  condado de Dublín (OpenStreetMap, 31 oct 2026): los que aún no tienen carta
+  verificada salen como «carta pendiente» y se investigan solos. Escribe un
+  plato (ej. «sushi», «cheeseburger») y salen todas las opciones; el mapa las
+  colorea por precio. Mueve el mapa para buscar el mismo plato en otra zona,
+  o pulsa «Buscar de nuevo». Lo que busques y no esté queda encargado para
+  investigación. Banyi cerró en nov 2025: en su dirección de Bedford Row abrió
+  Izushi. Regla Antojo: revalidar cada 90 días, primero lo más buscado; la
+  ficha avisa sola.
 </div>
 
 <main>
@@ -44,7 +47,9 @@
         <option value="valoracion">Mejor valorado</option>
       </select>
       <button id="geo">📍 Usar mi ubicación</button>
+      <button id="redo">🔄 Buscar de nuevo</button>
     </div>
+    <p class="map-hint">Mueve el mapa y se busca el mismo plato en la zona que estés viendo, sin recargar.</p>
     <div id="top-searches" class="top-searches"></div>
   </section>
 

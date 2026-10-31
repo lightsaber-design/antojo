@@ -117,6 +117,10 @@ async function handleSearch(env, url){
     if (ap == null) return 1; if (bp == null) return -1;
     return ap - bp;
   });
+  // Con referencia (mapa o GPS), el corte prioriza lo cercano para que la
+  // busqueda por zona no se quede sin los locales del area (31 oct 2026).
+  const hasRef = isFinite(lat) && isFinite(lon);
+  const cut = hasRef ? rows.slice().sort((a,b) => a.km - b.km).slice(0, 120) : rows.slice(0, 60);
   const vigentes = rows.filter(x => x.dish.price != null && daysSince(x.dish.chk) <= FRESH_DAYS);
   let queued = false;
   if (vigentes.length === 0) {
@@ -129,7 +133,20 @@ async function handleSearch(env, url){
     ).bind(nq, q, (s && s.count) || 1).run();
     queued = true;
   }
-  return json({ ok:true, results: rows.slice(0, 60), queued });
+  // Locales registrados que encajan con la busqueda (nombre o categoria) pero
+  // sin platos verificados todavia: se muestran como "carta pendiente" para
+  // que el mapa tenga cobertura real; el cron investiga sus cartas oficiales.
+  const { results: allVenues } = await env.DB.prepare("SELECT * FROM venues").all();
+  const withDish = new Set(rows.map(r => r.venue.id));
+  let venueMatches = allVenues
+    .filter(v => !withDish.has(v.id) && v.lat != null && matchesQuery("", v.name, venueCats(v), q))
+    .map(v => ({ venue: { id: v.id, name: v.name, address: v.address, lat: v.lat, lon: v.lon,
+        rating: v.rating, reviews: v.reviews, band: v.band, cat: v.cat,
+        cats: v.cats ? JSON.parse(v.cats) : null, source: v.source },
+      dish: null, km: haversineKm(ref, { lat: v.lat, lon: v.lon }) }));
+  venueMatches.sort((a,b) => a.km - b.km);
+  venueMatches = venueMatches.slice(0, 15);
+  return json({ ok:true, results: cut, venue_matches: venueMatches, queued });
 }
 
 async function handleSuggest(env, url){

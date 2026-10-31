@@ -36,6 +36,25 @@ los free tiers y de su cuenta de Cloudflare existente):
   (Workers Scripts + D1, solo su cuenta, 90 días, guardado en el vault de
   Instinct). D1 se siembra desde `data.js` con `worker/seed.mjs`.
 
+## Iteración 4 (31 oct 2026): búsqueda interactiva por zona + cobertura condado
+
+A petición de Carol (nota de voz, 31 oct 09:17):
+
+- **Buscar de nuevo**: botón persistente que repite la búsqueda actual en la
+  zona visible del mapa, sin recargar la página.
+- **Búsqueda al mover el mapa**: al mover o hacer zoom, se busca la misma
+  query en la zona visible (debounce 700 ms; los encuadres programados no
+  disparan búsqueda). La API ya acepta `lat`/`lon`; con referencia, el corte
+  de resultados prioriza lo cercano (hasta 120).
+- **Cobertura de locales**: `pipeline/discover-venues.mjs` descubre locales
+  reales en OpenStreetMap (Overpass, ODbL) en todo el condado de Dublín;
+  cada fila lleva fuente y fecha. Los locales que encajan con la búsqueda
+  pero aún sin platos verificados se muestran como «carta pendiente»
+  (`venue_matches` en `/api/search`) y el cron investiga sus cartas.
+- **Cosecha de platos**: `pipeline/harvest-dishes.mjs` extrae platos de las
+  cartas oficiales de los locales nuevos (misma higiene que el worker),
+  empezando por sushi, pho y tacos (encargos `needs_review`).
+
 ## Qué hace hoy (30 oct 2026)
 
 - 87 platos en 35 locales del centro (hamburguesas, ramen y brunch); 85 con

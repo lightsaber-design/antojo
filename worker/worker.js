@@ -54,6 +54,67 @@ function terminosDe(t){
   if (t.length > 3 && t.endsWith("s") && SINONIMOS[t.slice(0,-1)]) return SINONIMOS[t.slice(0,-1)];
   return [t];
 }
+
+// --- Categorias de plato (reglas por nombre, gratuitas) ---
+// Cada plato hereda UNA categoria al insertarse; las busquedas genericas
+// ("sushi", "hamburguesas"...) la usan y los chips se generan de ella.
+// Orden: lo mas especifico primero (sushi antes que pescado, burger antes
+// que steak) para que "Salmon Norimaki" sea sushi y "Beef Burger" hamburguesa.
+const CATEGORIAS = [
+  ["sushi",      ["sushi","maki","nigiri","sashimi","temaki","futomaki","hosomaki","norimaki","uramaki","gunkan","onigiri","omakase","california","dragon roll","rainbow roll"]],
+  ["ramen",      ["ramen"]],
+  ["noodles",    ["noodle","udon","soba","yakisoba","pad thai","pad see","chow mein","wok"]],
+  ["pizza",      ["pizza","margherita","napoletana","romana","diavola","capricciosa","calzone"]],
+  ["pasta",      ["pasta","spaghetti","tagliatelle","penne","ravioli","lasagna","lasagne","gnocchi","carbonara","pesto","rigatoni","fettuccine","cacio"]],
+  ["mexicana",   ["taco","tacos","birria","quesadilla","al pastor","carnitas","fajita","fajitas","nachos","burrito","enchilada"]],
+  ["kebab",      ["kebab","doner","shawarma","durum","falafel"]],
+  ["hamburguesas",["hamburguesa","burger","cheeseburger","smash","slider"]],
+  ["pollo",      ["chicken","pollo","katsu","karaage","wings","alitas","goujons","nuggets"," tenders"]],
+  ["parrilla",   ["steak","angus","brisket","ribeye","sirloin","entrecote","ribs","costillas","bbq"]],
+  ["pescado",    ["salmon","tuna","maguro","seabass","cod","bacalao","prawn","shrimp","gamba","ebi","mussels","mejillones","calamari","seafood","fish","trout","hake","monkfish","crab","lobster","oyster","scallop","poke"]],
+  ["brunch",     ["brunch","breakfast","full irish","pancake","tortitas","waffle","french toast","benedict","scrambled","omelette","omelet","granola","porridge","avocado toast"]],
+  ["tapas",      ["tapas","raciones","pintxos","croqueta","patatas bravas"]],
+  ["ensaladas",  ["ensalada","salad","caesar","buddha bowl"]],
+  ["sandwiches", ["sandwich","bocadillo","toastie","panini","wrap","bagel","club sandwich"]],
+  ["curry",      ["curry","masala","tikka","balti","vindaloo","korma","jalfrezi","biryani","dahl","dal"]],
+  ["postres",    ["postre","dessert","cake","tarta","brownie","cheesecake","tiramisu","ice cream","helado","mochi","churros","donut","doughnut","muffin","panna cotta","profiteroles","sticky toffee","crumble","sundae","affogato","cookie"]],
+  ["veggie",     ["vegetarian","vegan","veggie","halloumi","tofu","seitan"]]
+];
+function dishCategory(name){
+  const hay = " " + norm(name) + " ";
+  for (const [cat, kws] of CATEGORIAS) {
+    for (const kw of kws) {
+      if (kw.includes(" ") || kw.includes("roll")) { if (hay.includes(kw)) return cat; }
+      else {
+        const words = hay.split(/[^a-z0-9ñ]+/).filter(Boolean);
+        if (words.some(w => w === kw || w === kw + "s")) return cat;
+      }
+    }
+  }
+  return null;
+}
+// Alias genericos de busqueda -> categoria. Solo terminos genericos amplian
+// por categoria; un plato concreto ("tiramisu") sigue casando por nombre.
+const ALIAS_CATEGORIA = {
+  sushi: "sushi", sashimi: "sushi", maki: "sushi", rolls: "sushi",
+  ramen: "ramen", noodles: "noodles", fideos: "noodles", udon: "noodles",
+  pizza: "pizza", pizzas: "pizza", pasta: "pasta",
+  mexicana: "mexicana", tacos: "mexicana", burritos: "mexicana",
+  kebab: "kebab", kebabs: "kebab",
+  hamburguesa: "hamburguesas", hamburguesas: "hamburguesas", burger: "hamburguesas", burgers: "hamburguesas",
+  pollo: "pollo", chicken: "pollo", wings: "pollo", alitas: "pollo",
+  parrilla: "parrilla", steak: "parrilla", steaks: "parrilla",
+  pescado: "pescado", marisco: "pescado", seafood: "pescado", fish: "pescado", poke: "pescado",
+  brunch: "brunch", breakfast: "brunch", desayuno: "brunch", pancakes: "brunch",
+  tapas: "tapas", ensalada: "ensaladas", ensaladas: "ensaladas", salad: "ensaladas",
+  sandwich: "sandwiches", sandwiches: "sandwiches", bocadillo: "sandwiches", wrap: "sandwiches", wraps: "sandwiches",
+  curry: "curry", postre: "postres", postres: "postres", dessert: "postres", desserts: "postres", dulce: "postres", dulces: "postres",
+  veggie: "veggie", vegetariano: "veggie", vegano: "veggie", vegan: "veggie"
+};
+function termCategory(nq){
+  return ALIAS_CATEGORIA[nq] || null;
+}
+
 function venueCats(v){ try { return v.cats ? JSON.parse(v.cats) : [v.cat]; } catch(e){ return [v.cat]; } }
 // Distancia de edicion 1 entre terminos (letra cambiada, de mas o de menos):
 // los errores de tecleo de un termino conocido se fusionan con el y no se
@@ -141,7 +202,8 @@ async function handleSearch(env, url, ctx){
     "SELECT d.*, v.name vname, v.address, v.lat, v.lon, v.rating, v.reviews, v.band, v.cat, v.cats, v.source vsource " +
     "FROM dishes d JOIN venues v ON v.id = d.venue_id"
   ).all();
-  let rows = results.filter(r => dishMatches(r.name, q))
+  const catQ = termCategory(nq);
+  let rows = results.filter(r => dishMatches(r.name, q) || (catQ && r.dcat === catQ))
                     .map(r => rowToResult(r, ref));
   rows.sort((a,b) => {
     const ap = a.dish.price, bp = b.dish.price;
@@ -213,6 +275,15 @@ async function handleSuggest(env, url){
     "SELECT DISTINCT name FROM dishes WHERE lower(name) LIKE ? ORDER BY length(name) LIMIT 7"
   ).bind("%" + q + "%").all();
   return json({ ok:true, suggestions: results.map(r => r.name) });
+}
+
+
+async function handleCategories(env){
+  const { results } = await env.DB.prepare(
+    "SELECT dcat, COUNT(*) n, COUNT(DISTINCT venue_id) locales FROM dishes " +
+    "WHERE dcat IS NOT NULL AND price IS NOT NULL GROUP BY dcat ORDER BY n DESC"
+  ).all();
+  return json({ ok:true, categories: results });
 }
 
 async function handleStats(env){
@@ -442,11 +513,11 @@ async function investigateTerm(env, t, maxFetches){
       if (c.name.length < 3) continue;
       const hit = matchesQuery(c.name, v.name, venueCats(v), t.term);
       await env.DB.prepare(
-        "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note) VALUES(?,?,?,?,?,date('now'),?) " +
+        "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note,dcat) VALUES(?,?,?,?,?,date('now'),?,?) " +
         "ON CONFLICT(venue_id,name) DO UPDATE SET price=excluded.price, src=excluded.src, " +
-        "ch=excluded.ch, chk=excluded.chk, note=excluded.note, updated_at=date('now')"
+        "ch=excluded.ch, chk=excluded.chk, note=excluded.note, dcat=excluded.dcat, updated_at=date('now')"
       ).bind(v.id, c.name, c.price, v.menu_url, got.ch,
-        "auto-extraido de la fuente oficial (bot, revision pendiente)").run();
+        "auto-extraido de la fuente oficial (bot, revision pendiente)", dishCategory(c.name)).run();
       added++;
       if (hit) termHits++;
     }
@@ -485,10 +556,24 @@ async function investigateTerm(env, t, maxFetches){
   return { term: t.display, fetched, found };
 }
 async function revalidateBatch(env, limit){
-  const { results: stale } = await env.DB.prepare(
-    "SELECT d.id, d.venue_id, d.name, d.price, d.src, d.ch, d.chk FROM dishes d " +
-    "WHERE d.chk < date('now','-90 days') AND d.src IS NOT NULL ORDER BY d.chk ASC LIMIT ?"
-  ).bind(limit || 10).all();
+  // Prioridad inteligente: primero lo vencido que toca lo mas buscado
+  // (coincidencia por nombre o categoria con los 10 terminos top), luego
+  // por antiguedad. Asi el precio que caduca y mas se consulta se revierte
+  // antes que el de un plato que nadie busca (31 oct 2026).
+  const { results: staleAll } = await env.DB.prepare(
+    "SELECT d.id, d.venue_id, d.name, d.price, d.src, d.ch, d.chk, d.dcat FROM dishes d " +
+    "WHERE d.chk < date('now','-90 days') AND d.src IS NOT NULL ORDER BY d.chk ASC LIMIT 60"
+  ).all();
+  const { results: top } = await env.DB.prepare(
+    "SELECT term FROM searches ORDER BY count DESC LIMIT 10"
+  ).all();
+  const topCats = new Set((top || []).map(s => termCategory(s.term)).filter(Boolean));
+  const topTerms = (top || []).map(s => s.term);
+  const scoredStale = (staleAll || []).map(d => {
+    const hot = topCats.has(d.dcat) || topTerms.some(t => dishMatches(d.name, t));
+    return { d, hot };
+  }).sort((a, b) => (b.hot - a.hot) || (a.d.chk < b.d.chk ? -1 : 1));
+  const stale = scoredStale.slice(0, limit || 10).map(x => x.d);
   let updated = 0, kept = 0;
   for (const d of stale) {
     try {
@@ -498,11 +583,11 @@ async function revalidateBatch(env, limit){
       // Auto-siembra tambien al revalidar: todo plato nuevo de la carta entra.
       for (const c of cands) {
         await env.DB.prepare(
-          "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note) VALUES(?,?,?,?,?,date('now'),?) " +
+          "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note,dcat) VALUES(?,?,?,?,?,date('now'),?,?) " +
           "ON CONFLICT(venue_id,name) DO UPDATE SET price=excluded.price, src=excluded.src, " +
-          "ch=excluded.ch, chk=excluded.chk, note=excluded.note, updated_at=date('now')"
+          "ch=excluded.ch, chk=excluded.chk, note=excluded.note, dcat=excluded.dcat, updated_at=date('now')"
         ).bind(d.venue_id, c.name, c.price, d.src, got.ch,
-          "auto-extraido de la fuente oficial (bot, revision pendiente)").run();
+          "auto-extraido de la fuente oficial (bot, revision pendiente)", dishCategory(c.name)).run();
       }
       const hit = cands.find(c => norm(c.name) === norm(d.name));
       if (hit) {
@@ -561,6 +646,7 @@ export default {
       if (url.pathname === "/api/search") return await handleSearch(env, url, ctx);
       if (url.pathname === "/api/suggest") return await handleSuggest(env, url);
       if (url.pathname === "/api/stats") return await handleStats(env);
+      if (url.pathname === "/api/categories") return await handleCategories(env);
       if (url.pathname === "/api/queue") return await handleQueue(env);
       if (url.pathname === "/api/collect" && request.method === "POST") {
         if (!env.COLLECT_KEY || request.headers.get("x-antojo-key") !== env.COLLECT_KEY)

@@ -724,6 +724,33 @@
     // "sushi" en la API (platos verificados + locales de la zona con carta
     // pendiente), igual que escribirlo. Asi el mapa y "Buscar de nuevo"
     // siempre trabajan sobre la consulta activa (Carol, 31 oct 2026).
+
+  var CAT_EMOJI = { hamburguesas: "🍔", ramen: "🍜", sushi: "🍣", brunch: "🥞", pizza: "🍕", pasta: "🍝",
+    postres: "🍰", pollo: "🍗", pescado: "🐟", parrilla: "🥩", noodles: "🍲", mexicana: "🌮",
+    kebab: "🥙", tapas: "🍤", ensaladas: "🥗", sandwiches: "🥪", curry: "🍛", veggie: "🥦" };
+  var CAT_LABEL = { hamburguesas: "Hamburguesas", ramen: "Ramen", sushi: "Sushi", brunch: "Brunch",
+    pizza: "Pizza", pasta: "Pasta", postres: "Postres", pollo: "Pollo", pescado: "Pescado y marisco",
+    parrilla: "Parrilla", noodles: "Noodles", mexicana: "Mexicana", kebab: "Kebab", tapas: "Tapas",
+    ensaladas: "Ensaladas", sandwiches: "Sandwiches", curry: "Curry", veggie: "Veggie" };
+  var CAT_FIJAS = ["hamburguesas", "ramen", "sushi", "brunch"];
+  function buildChips(categories) {
+    var cont = document.querySelector(".chips");
+    if (!cont) return;
+    var presentes = {};
+    categories.forEach(function (c) { presentes[c.dcat] = c; });
+    var orden = CAT_FIJAS.filter(function (k) { return presentes[k]; }).concat(
+      categories.map(function (c) { return c.dcat; })
+        .filter(function (k) { return CAT_FIJAS.indexOf(k) < 0 && presentes[k].n >= 2; }));
+    orden = orden.slice(0, 12);
+    var html = '<button class="chip on" data-cat="todo">Todo</button>';
+    orden.forEach(function (k) {
+      html += '<button class="chip" data-cat="' + k + '">' + (CAT_EMOJI[k] || "🍽️") + " " +
+        esc(CAT_LABEL[k] || (k[0].toUpperCase() + k.slice(1))) + "</button>";
+    });
+    cont.innerHTML = html;
+    bindChips();
+  }
+  function bindChips() {
     Array.prototype.forEach.call(document.querySelectorAll(".chip:not(.small)"), function (chip) {
       chip.addEventListener("click", function () {
         Array.prototype.forEach.call(document.querySelectorAll(".chip:not(.small)"), function (c) { c.classList.remove("on"); });
@@ -739,6 +766,14 @@
         }
       });
     });
+  }
+
+    bindChips();
+    // Chips vivos: las categorias salen de la base (platos reales con precio),
+    // asi una categoria nueva aparece sola cuando hay platos que la sostienen.
+    fetch(API_BASE + "/api/categories").then(function (r) { return r.json(); }).then(function (j) {
+      if (j && j.ok && j.categories) buildChips(j.categories);
+    }).catch(function () {});
     document.getElementById("redo").addEventListener("click", function () {
       // Boton persistente: repite la busqueda actual en la zona visible del
       // mapa (o en la referencia activa), sin recargar la pagina.

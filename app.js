@@ -263,16 +263,21 @@
       }
     }
     function precioDe(x) { return x.dish ? x.dish.price : null; }
-    if (sortBy === "precio") out.sort(function (a, b) {
+    var cmp;
+    if (sortBy === "precio") cmp = function (a, b) {
       var ap = precioDe(a), bp = precioDe(b);
       if (ap == null && bp == null) return a.km - b.km;
       if (ap == null) return 1;
       if (bp == null) return -1;
       return ap - bp;
-    });
-    else if (sortBy === "valoracion") out.sort(function (a, b) { return (b.venue.rating || 0) - (a.venue.rating || 0); });
-    else out.sort(function (a, b) { return a.km - b.km; });
-    return out;
+    };
+    else if (sortBy === "valoracion") cmp = function (a, b) { return (b.venue.rating || 0) - (a.venue.rating || 0); };
+    else cmp = function (a, b) { return a.km - b.km; };
+    // Platos que coinciden siempre primero; los locales con carta pendiente
+    // van despues, ordenados con el mismo criterio (31 oct 2026).
+    var conPlato = out.filter(function (x) { return x.dish; }).sort(cmp);
+    var sinPlato = out.filter(function (x) { return !x.dish; }).sort(cmp);
+    return conPlato.concat(sinPlato);
   }
 
   // --- Comparacion del mismo plato entre locales (idea de cheapotle: solo la idea) ---

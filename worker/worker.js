@@ -55,6 +55,13 @@ function terminosDe(t){
   return [t];
 }
 function venueCats(v){ try { return v.cats ? JSON.parse(v.cats) : [v.cat]; } catch(e){ return [v.cat]; } }
+// Coincidencia por palabra (no subcadena): "rolling" ya no casa con "roll";
+// admite plural simple ("rolls"="roll") y prefijos de terminos largos (31 oct 2026).
+function wordMatch(hay, term){
+  const words = hay.split(/[^a-z0-9ñ]+/).filter(Boolean);
+  return words.some(w => w === term || w === term + "s" || (w.length > 3 && w + "s" === term) ||
+    (term.length >= 5 && w.length >= 3 && (w.startsWith(term) || term.startsWith(w))));
+}
 // Un plato coincide SOLO por su nombre (con sinonimos), nunca por la
 // categoria del local: "sushi" devuelve sushi/maki/nigiri/rolls, no ramen.
 function dishMatches(dishName, q){
@@ -63,7 +70,7 @@ function dishMatches(dishName, q){
   if (!tokens.length) return true;
   const frase = tokens.join(" ");
   if (frase.length >= 3 && hay.includes(frase)) return true;
-  return tokens.every(t => terminosDe(t).some(term => hay.includes(term)));
+  return tokens.every(t => terminosDe(t).some(term => wordMatch(hay, term)));
 }
 function matchesQuery(dishName, venueName, cats, q){
   const hay = norm(dishName + " " + venueName + " " + (cats||[]).join(" "));
@@ -71,7 +78,7 @@ function matchesQuery(dishName, venueName, cats, q){
   if (!tokens.length) return true;
   const frase = tokens.join(" ");
   if (frase.length >= 3 && hay.includes(frase)) return true;
-  return tokens.every(t => terminosDe(t).some(term => hay.includes(term)));
+  return tokens.every(t => terminosDe(t).some(term => wordMatch(hay, term)));
 }
 function haversineKm(a, b){
   const R=6371, dLat=(b.lat-a.lat)*Math.PI/180, dLon=(b.lon-a.lon)*Math.PI/180;
@@ -259,7 +266,7 @@ async function collectBatch(env, maxTerms){
     const scored = venues.map(v => {
       const hay = norm(v.name + " " + venueCats(v).join(" "));
       const toks = norm(t.term).split(/\s+/).filter(Boolean);
-      const hit = toks.some(tok => terminosDe(tok).some(term => hay.includes(term)));
+      const hit = toks.some(tok => terminosDe(tok).some(term => wordMatch(hay, term)));
       return { v, score: hit ? 1 : 0 };
     }).sort((a,b) => b.score - a.score);
     let found = 0, fetched = 0, lastErr = null;

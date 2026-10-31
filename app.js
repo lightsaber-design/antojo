@@ -20,7 +20,6 @@
   var FRESH = (typeof FRESH_DAYS !== "undefined") ? FRESH_DAYS : 90;
   var SOON_DAYS = 15; // aviso de "revalidar pronto" en los ultimos 15 dias de vigencia
   var ref = { lat: DUBLIN_CENTER.lat, lon: DUBLIN_CENTER.lon, label: "Centro de Dublín" };
-  var activeCat = "todo";
   var query = "";
   var sortBy = "distancia";
   var markers = [];
@@ -31,7 +30,17 @@
   var API_BASE = "https://antojo-api.caroldenissetorres.workers.dev";
   var liveRows = null, liveQuery = null, liveState = "local";
   var liveSeq = 0, apiSuggest = [];
-  // 31 oct 2026 (4a iteracion, a peticion de Carol): busqueda interactiva.
+  // 31 oct 2026 (5a iteracion, a peticion de Carol):
+//  - las categorias (chips) AHORA fijan la busqueda: al tocar Sushi se busca
+//    "sushi" de verdad (antes solo filtraban datos locales y el mapa nunca
+//    rebuscaba en la API al moverlo ni con "Buscar de nuevo")
+//  - filtro de platos estricto: un plato coincide por su NOMBRE (con
+//    sinonimos), no por la categoria del local ("sushi" ya no devuelve ramen)
+//  - auto-busqueda al mover el mapa robusta: se distingue el movimiento del
+//    usuario (originalEvent) del programado; el flag ya no puede tragarse
+//    un movimiento manual
+//  - "Mas buscado" fusiona prefijos ("sush" se suma a "sushi", no ensucia)
+// 31 oct 2026 (4a iteracion, a peticion de Carol): busqueda interactiva.
   // Boton persistente "Buscar de nuevo" y auto-busqueda de la misma query al
   // mover/zoom del mapa (busca en la zona visible, no solo en el centro fijo
   // de Dublin), todo sin recargar la pagina.
@@ -131,7 +140,14 @@
     q = norm(q).trim();
     if (q.length < 3) return;
     var s = loadSearches();
-    s[q] = (s[q] || 0) + 1;
+    // Teclear a medias ensucia el ranking ("sush · 1" junto a "sushi · 4"):
+    // si un termino es prefijo de otro, se fusionan en el mas largo.
+    var merged = 0;
+    Object.keys(s).forEach(function (k) {
+      if (k === q) return;
+      if (q.indexOf(k) === 0 || k.indexOf(q) === 0) { merged += s[k]; delete s[k]; }
+    });
+    s[q] = (s[q] || 0) + 1 + merged;
     try { localStorage.setItem(SEARCH_KEY, JSON.stringify(s)); } catch (e) {}
   }
   function topSearches(n) {
@@ -167,7 +183,7 @@
   // nombre del plato, el local o su categoria. Asi "sushi" encuentra rolls,
   // maki y nigiri aunque el nombre del plato no diga "sushi".
   var SINONIMOS = {
-    sushi: ["sushi", "roll", "maki", "nigiri", "sashimi", "temaki", "futomaki", "hosomaki", "norimaki", "california"],
+    sushi: ["sushi", "roll", "maki", "nigiri", "sashimi", "temaki", "futomaki", "hosomaki", "norimaki", "california", "japones", "japanese", "izakaya"],
     rolls: ["roll", "maki", "norimaki", "futomaki"],
     maki: ["maki", "roll", "norimaki", "hosomaki", "futomaki"],
     nigiri: ["nigiri", "sushi"],
@@ -208,9 +224,10 @@
     if (t.length > 3 && t.charAt(t.length - 1) === "s" && SINONIMOS[t.slice(0, -1)]) return SINONIMOS[t.slice(0, -1)];
     return [t];
   }
-  function venueCats(v) { return v.cats || [v.cat]; }
+  // Un plato coincide SOLO por su nombre (con sinonimos): si buscas "sushi"
+  // no salen ramen ni gyoza de un local japones (Carol, 31 oct 2026).
   function haystack(x) {
-    return norm(x.dish.name + " " + x.venue.name + " " + venueCats(x.venue).join(" "));
+    return norm(x.dish.name);
   }
   function matchesQuery(x, q) {
     var hay = haystack(x);
@@ -236,9 +253,6 @@
       if (query) {
         out = out.filter(function (x) { return matchesQuery(x, query); });
       }
-    }
-    if (activeCat !== "todo") {
-      out = out.filter(function (x) { return venueCats(x.venue).indexOf(activeCat) >= 0; });
     }
     function precioDe(x) { return x.dish ? x.dish.price : null; }
     if (sortBy === "precio") out.sort(function (a, b) {
@@ -469,7 +483,9 @@
             ratingHtml +
             bandHtml +
           "</div>" +
-          '<div class="verify no">carta pendiente de investigación · se añadirá con fuente, fecha y canal</div>';
+          '<div class="verify no">' + (x.has_dishes
+            ? "ya tiene carta verificada en Antojo · sus platos salen al buscarlos por nombre"
+            : "carta pendiente de investigación · se añadirá con fuente, fecha y canal") + "</div>";
         el.appendChild(card);
         return;
       }
@@ -515,17 +531,22 @@
     // Al mover o hacer zoom en el mapa, se busca la MISMA query en la zona
     // visible (debounce 700 ms, sin recargar la pagina). Los movimientos
     // programados (fitBounds/flyTo) no disparan busqueda.
-    map.on("moveend", function () {
-      if (suppressMapMove) { suppressMapMove = false; return; }
+    map.on("moveend", function (e) {
+      // Movimiento del usuario (arrastre/pellizco lleva originalEvent) vs
+      // programado (fitBounds/flyTo). El flag solo traga movimientos
+      // programados; un arrastre manual SIEMPRE rebusca (31 oct 2026).
+      var delUsuario = !!(e && e.originalEvent);
+      if (suppressMapMove && !delUsuario) { suppressMapMove = false; return; }
+      suppressMapMove = false;
       var c = map.getCenter();
       var centro = { lat: c.lat, lon: c.lng };
       ref = { lat: c.lat, lon: c.lng, label: "la zona del mapa" };
-      if (norm(query).trim().length < 3) { render(); return; } // solo recentra las distancias
-      if (lastSearchCenter && haversineKm(lastSearchCenter, centro) < 0.25) { render(); return; }
+      var q = norm(query).trim();
+      if (q.length < 3) { render(); return; } // sin busqueda activa: solo recentra distancias
+      if (liveQuery === q && lastSearchCenter && haversineKm(lastSearchCenter, centro) < 0.25) { render(); return; }
       if (mapMoveTimer) clearTimeout(mapMoveTimer);
       mapMoveTimer = setTimeout(function () {
         fetchLive(query, false);
-        render();
       }, 700);
     });
   }
@@ -634,12 +655,23 @@
       sortBy = e.target.value;
       render();
     });
+    // Las categorias fijan la busqueda de verdad: tocar "Sushi" busca
+    // "sushi" en la API (platos verificados + locales de la zona con carta
+    // pendiente), igual que escribirlo. Asi el mapa y "Buscar de nuevo"
+    // siempre trabajan sobre la consulta activa (Carol, 31 oct 2026).
     Array.prototype.forEach.call(document.querySelectorAll(".chip:not(.small)"), function (chip) {
       chip.addEventListener("click", function () {
         Array.prototype.forEach.call(document.querySelectorAll(".chip:not(.small)"), function (c) { c.classList.remove("on"); });
         chip.classList.add("on");
-        activeCat = chip.getAttribute("data-cat");
+        var cat = chip.getAttribute("data-cat");
+        query = (cat === "todo") ? "" : cat;
+        document.getElementById("q").value = query;
         render();
+        if (norm(query).trim().length >= 3) {
+          recordSearch(query);
+          renderTopSearches();
+          fetchLive(query);
+        }
       });
     });
     document.getElementById("redo").addEventListener("click", function () {

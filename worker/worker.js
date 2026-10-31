@@ -4,12 +4,15 @@
 // en las cartas oficiales de los locales registrados. Nada de precios
 // inventados: todo lo que entra lleva src (URL), chk (fecha) y ch (canal).
 // Metodologia de extraccion adaptada de deielurbe/amsterdam-menus (MIT) - ver NOTICE.md.
+// 31 oct 2026 (5a iteracion): los platos coinciden SOLO por nombre (con
+// sinonimos): "sushi" ya no devuelve ramen de locales japoneses; los locales
+// se siguen emparejando por nombre+categoria (carta pendiente / verificada).
 const CENTER = { lat: 53.3498, lon: -6.2603 };
 const FRESH_DAYS = 90;
 const MAX_FETCH_BYTES = 900000;
 
 const SINONIMOS = {
-  sushi: ["sushi","roll","maki","nigiri","sashimi","temaki","futomaki","hosomaki","norimaki","california"],
+  sushi: ["sushi","roll","maki","nigiri","sashimi","temaki","futomaki","hosomaki","norimaki","california","japones","japanese","izakaya"],
   rolls: ["roll","maki","norimaki","futomaki"], maki: ["maki","roll","norimaki","hosomaki","futomaki"],
   nigiri: ["nigiri","sushi"], sashimi: ["sashimi","sushi"],
   hamburguesa: ["hamburguesa","burger","hamburger","cheeseburger","smash"],
@@ -52,6 +55,16 @@ function terminosDe(t){
   return [t];
 }
 function venueCats(v){ try { return v.cats ? JSON.parse(v.cats) : [v.cat]; } catch(e){ return [v.cat]; } }
+// Un plato coincide SOLO por su nombre (con sinonimos), nunca por la
+// categoria del local: "sushi" devuelve sushi/maki/nigiri/rolls, no ramen.
+function dishMatches(dishName, q){
+  const hay = norm(dishName);
+  const tokens = norm(q).split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  const frase = tokens.join(" ");
+  if (frase.length >= 3 && hay.includes(frase)) return true;
+  return tokens.every(t => terminosDe(t).some(term => hay.includes(term)));
+}
 function matchesQuery(dishName, venueName, cats, q){
   const hay = norm(dishName + " " + venueName + " " + (cats||[]).join(" "));
   const tokens = norm(q).split(/\s+/).filter(Boolean);
@@ -109,7 +122,7 @@ async function handleSearch(env, url){
     "SELECT d.*, v.name vname, v.address, v.lat, v.lon, v.rating, v.reviews, v.band, v.cat, v.cats, v.source vsource " +
     "FROM dishes d JOIN venues v ON v.id = d.venue_id"
   ).all();
-  let rows = results.filter(r => matchesQuery(r.name, r.vname, venueCats(r), q))
+  let rows = results.filter(r => dishMatches(r.name, q))
                     .map(r => rowToResult(r, ref));
   rows.sort((a,b) => {
     const ap = a.dish.price, bp = b.dish.price;
@@ -138,14 +151,17 @@ async function handleSearch(env, url){
   // que el mapa tenga cobertura real; el cron investiga sus cartas oficiales.
   const { results: allVenues } = await env.DB.prepare("SELECT * FROM venues").all();
   const withDish = new Set(rows.map(r => r.venue.id));
+  const dishCountByVenue = {};
+  results.forEach(r => { dishCountByVenue[r.venue_id] = (dishCountByVenue[r.venue_id] || 0) + 1; });
   let venueMatches = allVenues
     .filter(v => !withDish.has(v.id) && v.lat != null && matchesQuery("", v.name, venueCats(v), q))
     .map(v => ({ venue: { id: v.id, name: v.name, address: v.address, lat: v.lat, lon: v.lon,
         rating: v.rating, reviews: v.reviews, band: v.band, cat: v.cat,
         cats: v.cats ? JSON.parse(v.cats) : null, source: v.source },
-      dish: null, km: haversineKm(ref, { lat: v.lat, lon: v.lon }) }));
+      dish: null, km: haversineKm(ref, { lat: v.lat, lon: v.lon }),
+      has_dishes: !!dishCountByVenue[v.id] }));
   venueMatches.sort((a,b) => a.km - b.km);
-  venueMatches = venueMatches.slice(0, 15);
+  venueMatches = venueMatches.slice(0, 25);
   return json({ ok:true, results: cut, venue_matches: venueMatches, queued });
 }
 

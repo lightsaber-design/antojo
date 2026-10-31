@@ -68,7 +68,7 @@ for (const el of overpass.elements) {
   const n = norm(name);
   if (existing.some((v) => (norm(v.name) === n || norm(v.name).includes(n) || n.includes(norm(v.name))) && km(v, { lat, lon }) < 0.15)) { dupExisting++; continue; }
   if (seenNames.some((v) => norm(v.name) === n && km(v, { lat, lon }) < 0.15)) { dupSelf++; continue; }
-  const web = t["contact:website"] || t.website || t.url || null;
+  const web = t["contact:menu"] || t.menu || t["contact:website"] || t.website || t.url || null;
   const cats = mapCats(t.cuisine, t.amenity);
   const addr = [t["addr:housenumber"], t["addr:street"]].filter(Boolean).join(" ") || t["addr:city"] || null;
   const v = {

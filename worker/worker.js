@@ -275,17 +275,136 @@ function extractCandidates(text){
   }
   return out;
 }
+
+// PDF de carta: extrae texto de los streams FlateDecode (Tj/TJ). Sin librerias:
+// DecompressionStream('deflate') entiende el formato zlib de FlateDecode.
+// Los marcadores stream/endstream se buscan a nivel de BYTES (sin decodificar:
+// una vuelta latin1 corrompe el 0x9C del encabezado zlib). Las cadenas pueden
+// venir WinAnsi o con códigos de fuente (1 o 2 bytes) que exigen el mapa
+// ToUnicode de SU fuente: como cada fuente trae el suyo, se prueba cada mapa
+// y gana la decodificacion mas legible. Un PDF de solo imagenes devuelve "".
+function indexOfBytes(hay, needle, from){
+  outer: for (let i = from || 0; i + needle.length <= hay.length; i++) {
+    for (let j = 0; j < needle.length; j++) if (hay[i + j] !== needle[j]) continue outer;
+    return i;
+  }
+  return -1;
+}
+function parseToUnicodeCMap(txt){
+  const map = {};
+  let m;
+  const rangeRe = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>\s*(?:<([0-9A-Fa-f]+)>|\[((?:\s*<[0-9A-Fa-f]+>)*)\])/g;
+  while ((m = rangeRe.exec(txt))) {
+    const lo = parseInt(m[1], 16), hi = parseInt(m[2], 16);
+    if (hi - lo > 4096) continue;
+    if (m[3]) { const base = parseInt(m[3], 16); for (let c = lo; c <= hi; c++) map[c] = String.fromCharCode(base + (c - lo)); }
+    else if (m[4]) { [...m[4].matchAll(/<([0-9A-Fa-f]+)>/g)].forEach((x, i) => { map[lo + i] = String.fromCharCode(parseInt(x[1], 16)); }); }
+  }
+  const charSec = (txt.split("beginbfchar")[1] || "").split("endbfchar")[0];
+  const charRe = /<([0-9A-Fa-f]+)>\s*<([0-9A-Fa-f]+)>/g;
+  while ((m = charRe.exec(charSec))) map[parseInt(m[1], 16)] = String.fromCharCode(parseInt(m[2], 16));
+  return map;
+}
+function scoreText(t){
+  let s = 0;
+  for (const ch of t) {
+    if (/[\p{L}\p{N}€$£.,()&'’\-\/+ ]/u.test(ch)) s += 2;
+    else if (ch === "\n") s += 0;
+    else s -= 3;
+  }
+  return s;
+}
+function decodePdfString(rawStr, cmaps){
+  let best = rawStr, bestScore = scoreText(rawStr);
+  for (const cmap of cmaps) {
+    let o1 = "";
+    for (let i = 0; i < rawStr.length; i++) o1 += cmap[rawStr.charCodeAt(i)] || "�";
+    const s1 = scoreText(o1);
+    if (s1 > bestScore) { best = o1; bestScore = s1; }
+    if (rawStr.length >= 2) {
+      let o2 = "";
+      for (let i = 0; i + 1 < rawStr.length; i += 2) o2 += cmap[(rawStr.charCodeAt(i) << 8) | rawStr.charCodeAt(i + 1)] || "�";
+      const s2 = scoreText(o2);
+      if (s2 > bestScore) { best = o2; bestScore = s2; }
+    }
+  }
+  return best;
+}
+async function pdfToText(buf){
+  const bytes = new Uint8Array(buf);
+  const STREAM = [115,116,114,101,97,109], END = [101,110,100,115,116,114,101,97,109];
+  const contents = [], cmaps = [];
+  let pos = 0, n = 0;
+  while (n < 300) {
+    const si = indexOfBytes(bytes, STREAM, pos);
+    if (si < 0) break;
+    let start = si + 6;
+    if (bytes[start] === 13 && bytes[start + 1] === 10) start += 2;
+    else if (bytes[start] === 10) start += 1;
+    const ei = indexOfBytes(bytes, END, start);
+    if (ei < 0) break;
+    pos = ei + 9; n++;
+    let e = ei;
+    if (bytes[e - 1] === 10) e--; if (bytes[e - 1] === 13) e--;
+    try {
+      const ab = await new Response(
+        new Blob([bytes.slice(start, e)]).stream().pipeThrough(new DecompressionStream("deflate"))
+      ).arrayBuffer();
+      const txt = new TextDecoder("latin1").decode(ab);
+      if (/\)\s*Tj|\]\s*TJ/.test(txt)) contents.push(txt);
+      else if (txt.includes("beginbfchar") || txt.includes("beginbfrange")) cmaps.push(txt);
+    } catch (err) { /* stream no flate: fuera */ }
+  }
+  const maps = cmaps.map(parseToUnicodeCMap).filter(m => Object.keys(m).length);
+  const out = [];
+  const strRe = /\((?:\\.|[^\\()])*\)/g;
+  for (const p of contents) {
+    let sm;
+    while ((sm = strRe.exec(p))) {
+      const rawStr = sm[0].slice(1, -1).replace(/\\([()\\])/g, "$1");
+      const t = decodePdfString(rawStr, maps);
+      if (t.trim() && scoreText(t) > 0) out.push(t);
+    }
+  }
+  return out.join("\n");
+}
 async function fetchMenuText(u){
   const res = await fetch(u, {
     headers: { "user-agent": "AntojoBot/0.1 (+https://github.com/lightsaber-design/restaurant)",
-      "accept": "text/html,text/plain,*/*" },
+      "accept": "text/html,application/pdf,text/plain,*/*" },
     redirect: "follow", signal: AbortSignal.timeout(9000)
   });
   if (!res.ok) throw new Error("HTTP " + res.status);
   const ct = res.headers.get("content-type") || "";
-  if (!/text|html|json/.test(ct)) throw new Error("content-type " + ct);
   const buf = await res.arrayBuffer();
-  return new TextDecoder().decode(buf.slice(0, MAX_FETCH_BYTES));
+  if (/pdf/i.test(ct) || /\.pdf(\?|#|$)/i.test(u)) {
+    const text = await pdfToText(buf.slice(0, 4 * MAX_FETCH_BYTES));
+    if (!text.trim()) throw new Error("pdf sin texto extraible (¿escaneado?)");
+    return { text, ch: "pdf", html: null };
+  }
+  if (!/text|html|json/.test(ct)) throw new Error("content-type " + ct);
+  const html = new TextDecoder().decode(buf.slice(0, MAX_FETCH_BYTES));
+  return { text: html, ch: "carta", html };
+}
+// En una web oficial, busca el enlace a la carta (o PDF de carta) del propio
+// sitio: mejora menu_url sola durante el uso normal. Mismo dominio solamente.
+function menuLinkFromHtml(html, base){
+  try {
+    const b = new URL(base);
+    const re = /href=["']([^"']+)["']/gi;
+    let m, best = null;
+    while ((m = re.exec(html))) {
+      let href = m[1];
+      if (/^(mailto:|tel:|javascript:|#)/i.test(href)) continue;
+      let abs;
+      try { abs = new URL(href, b); } catch (e) { continue; }
+      if (abs.hostname !== b.hostname) continue;
+      const p = abs.pathname.toLowerCase();
+      if (/\.pdf$/.test(p) && /menu|carta|carta|food|eat/.test(p)) return abs.href;
+      if (/menu|carta|food-menu|our-food|la-carta/.test(p) && !best) best = abs.href;
+    }
+    return best;
+  } catch (e) { return null; }
 }
 async function collectBatch(env, maxTerms){
   const { results: terms } = await env.DB.prepare(
@@ -314,19 +433,31 @@ async function investigateTerm(env, t, maxFetches){
   }).sort((a,b) => b.score - a.score);
   let found = 0, fetched = 0, lastErr = null;
   async function probeVenue(v){
-    const text = htmlToText(await fetchMenuText(v.menu_url));
-    const cands = extractCandidates(text);
-    let n = 0;
+    const got = await fetchMenuText(v.menu_url);
+    const cands = extractCandidates(htmlToText(got.text));
+    // Auto-siembra: TODO plato de una carta oficial leida entra en la base
+    // con fuente/fecha/canal, aunque no sea el termino buscado (31 oct 2026).
+    let added = 0, termHits = 0;
     for (const c of cands) {
-      if (!matchesQuery(c.name, v.name, venueCats(v), t.term)) continue;
+      if (c.name.length < 3) continue;
+      const hit = matchesQuery(c.name, v.name, venueCats(v), t.term);
       await env.DB.prepare(
         "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note) VALUES(?,?,?,?,?,date('now'),?) " +
         "ON CONFLICT(venue_id,name) DO UPDATE SET price=excluded.price, src=excluded.src, " +
         "ch=excluded.ch, chk=excluded.chk, note=excluded.note, updated_at=date('now')"
-      ).bind(v.id, c.name, c.price, v.menu_url, "carta", "extraido de la carta oficial (bot, revision pendiente)").run();
-      n++;
+      ).bind(v.id, c.name, c.price, v.menu_url, got.ch,
+        "auto-extraido de la fuente oficial (bot, revision pendiente)").run();
+      added++;
+      if (hit) termHits++;
     }
-    return n;
+    // Mejora continua de menu_url: si la pagina enlaza su carta/PDF, sube a ella.
+    if (got.html) {
+      const better = menuLinkFromHtml(got.html, v.menu_url);
+      if (better && better !== v.menu_url) {
+        await env.DB.prepare("UPDATE venues SET menu_url=? WHERE id=?").bind(better, v.id).run();
+      }
+    }
+    return termHits;
   }
   // Fetches en paralelo de 5 en 5: el disparo inmediato cubre mas cartas
   // (cap mas alto) sin alargar la espera de quien busca.
@@ -361,8 +492,18 @@ async function revalidateBatch(env, limit){
   let updated = 0, kept = 0;
   for (const d of stale) {
     try {
-      const text = htmlToText(await fetchMenuText(d.src));
+      const got = await fetchMenuText(d.src);
+      const text = htmlToText(got.text);
       const cands = extractCandidates(text);
+      // Auto-siembra tambien al revalidar: todo plato nuevo de la carta entra.
+      for (const c of cands) {
+        await env.DB.prepare(
+          "INSERT INTO dishes(venue_id,name,price,src,ch,chk,note) VALUES(?,?,?,?,?,date('now'),?) " +
+          "ON CONFLICT(venue_id,name) DO UPDATE SET price=excluded.price, src=excluded.src, " +
+          "ch=excluded.ch, chk=excluded.chk, note=excluded.note, updated_at=date('now')"
+        ).bind(d.venue_id, c.name, c.price, d.src, got.ch,
+          "auto-extraido de la fuente oficial (bot, revision pendiente)").run();
+      }
       const hit = cands.find(c => norm(c.name) === norm(d.name));
       if (hit) {
         const hist = JSON.stringify([{ price: d.price, chk: d.chk, src: d.src, ch: d.ch }]);

@@ -55,6 +55,22 @@ function terminosDe(t){
   return [t];
 }
 function venueCats(v){ try { return v.cats ? JSON.parse(v.cats) : [v.cat]; } catch(e){ return [v.cat]; } }
+// Distancia de edicion 1 entre terminos (letra cambiada, de mas o de menos):
+// los errores de tecleo de un termino conocido se fusionan con el y no se
+// registran ni se encargan como busquedas nuevas (31 oct 2026).
+function esTipoDe(a, b){
+  if (a === b) return false;
+  const la = a.length, lb = b.length;
+  if (Math.abs(la - lb) > 1 || la < 4 || lb < 4) return false;
+  let i = 0, j = 0, diffs = 0;
+  while (i < la && j < lb){
+    if (a[i] === b[j]){ i++; j++; continue; }
+    if (++diffs > 1) return false;
+    if (la > lb) i++; else if (lb > la) j++; else { i++; j++; }
+  }
+  if (i < la || j < lb) diffs++;
+  return diffs <= 1;
+}
 // Coincidencia por palabra (no subcadena): "rolling" ya no casa con "roll";
 // admite plural simple ("rolls"="roll") y prefijos de terminos largos (31 oct 2026).
 function wordMatch(hay, term){
@@ -120,11 +136,6 @@ async function handleSearch(env, url){
   const lat = parseFloat(url.searchParams.get("lat")), lon = parseFloat(url.searchParams.get("lon"));
   const ref = (isFinite(lat) && isFinite(lon)) ? { lat, lon } : CENTER;
   const today = new Date().toISOString().slice(0,10);
-  // Registrar la busqueda (alimenta "primero lo mas buscado")
-  await env.DB.prepare(
-    "INSERT INTO searches(term,display,count,last_at) VALUES(?,?,1,?) " +
-    "ON CONFLICT(term) DO UPDATE SET count=count+1, display=excluded.display, last_at=excluded.last_at"
-  ).bind(nq, q, today).run();
   const { results } = await env.DB.prepare(
     "SELECT d.*, v.name vname, v.address, v.lat, v.lon, v.rating, v.reviews, v.band, v.cat, v.cats, v.source vsource " +
     "FROM dishes d JOIN venues v ON v.id = d.venue_id"
@@ -142,8 +153,20 @@ async function handleSearch(env, url){
   const hasRef = isFinite(lat) && isFinite(lon);
   const cut = hasRef ? rows.slice().sort((a,b) => a.km - b.km).slice(0, 120) : rows.slice(0, 60);
   const vigentes = rows.filter(x => x.dish.price != null && daysSince(x.dish.chk) <= FRESH_DAYS);
+  // Registrar la busqueda (alimenta "primero lo mas buscado"). Si el termino
+  // es un error de tecleo de uno conocido, suma al conocido y no crea entrada.
+  const { results: previas } = await env.DB.prepare("SELECT term FROM searches").all();
+  const conocido = (previas || []).find(s => esTipoDe(nq, s.term));
+  if (conocido) {
+    await env.DB.prepare("UPDATE searches SET count=count+1, last_at=? WHERE term=?").bind(today, conocido.term).run();
+  } else {
+    await env.DB.prepare(
+      "INSERT INTO searches(term,display,count,last_at) VALUES(?,?,1,?) " +
+      "ON CONFLICT(term) DO UPDATE SET count=count+1, display=excluded.display, last_at=excluded.last_at"
+    ).bind(nq, q, today).run();
+  }
   let queued = false;
-  if (vigentes.length === 0) {
+  if (vigentes.length === 0 && !conocido) {
     // Encargo: se investiga en fuentes oficiales (cron), primero lo mas buscado
     const s = await env.DB.prepare("SELECT count FROM searches WHERE term=?").bind(nq).first();
     await env.DB.prepare(

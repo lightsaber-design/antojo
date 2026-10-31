@@ -28,7 +28,7 @@
   // Backend Fase 1 (Worker + D1): la demo consulta primero la base propia en
   // vivo; si la API no responde, cae a los datos locales (data.js) y lo dice.
   var API_BASE = "https://antojo-api.caroldenissetorres.workers.dev";
-  var liveRows = null, liveQuery = null, liveState = "local";
+  var liveRows = null, liveQuery = null, liveState = "local", liveCorrection = null;
   var liveSeq = 0, apiSuggest = [];
   // 31 oct 2026 (5a iteracion, a peticion de Carol):
 //  - las categorias (chips) AHORA fijan la busqueda: al tocar Sushi se busca
@@ -144,6 +144,21 @@
   function loadSearches() {
     try { return JSON.parse(localStorage.getItem(SEARCH_KEY)) || {}; } catch (e) { return {}; }
   }
+  // Distancia de edicion 1: los errores de tecleo de un termino conocido se
+  // fusionan con el ("suchi" suma a "sushi", no crea entrada nueva) (31 oct 2026).
+  function esTipoDe(a, b) {
+    if (a === b) return false;
+    var la = a.length, lb = b.length;
+    if (Math.abs(la - lb) > 1 || la < 4 || lb < 4) return false;
+    var i = 0, j = 0, diffs = 0;
+    while (i < la && j < lb) {
+      if (a[i] === b[j]) { i++; j++; continue; }
+      if (++diffs > 1) return false;
+      if (la > lb) i++; else if (lb > la) j++; else { i++; j++; }
+    }
+    if (i < la || j < lb) diffs++;
+    return diffs <= 1;
+  }
   function recordSearch(q) {
     q = norm(q).trim();
     if (q.length < 3) return;
@@ -155,6 +170,16 @@
       if (k === q) return;
       if (q.indexOf(k) === 0 || k.indexOf(q) === 0) { merged += s[k]; delete s[k]; }
     });
+    if (!s[q]) {
+      var canon = Object.keys(s).concat(SUGGEST_TERMS.map(function (t) { return norm(t); }));
+      for (var ci = 0; ci < canon.length; ci++) {
+        if (esTipoDe(q, canon[ci])) {
+          s[canon[ci]] = (s[canon[ci]] || 0) + 1 + merged;
+          try { localStorage.setItem(SEARCH_KEY, JSON.stringify(s)); } catch (e) {}
+          return;
+        }
+      }
+    }
     s[q] = (s[q] || 0) + 1 + merged;
     try { localStorage.setItem(SEARCH_KEY, JSON.stringify(s)); } catch (e) {}
   }
@@ -326,6 +351,8 @@
   function recordEncargo(q) {
     q = norm(q).trim();
     if (q.length < 3) return;
+    var known = SUGGEST_TERMS.map(function (t) { return norm(t); }).concat(Object.keys(loadSearches()));
+    if (known.some(function (k) { return esTipoDe(q, k); })) return;
     var e = loadEnc();
     var it = e[q] || { n: 0, first: new Date().toISOString().slice(0, 10) };
     it.n += 1;
@@ -346,11 +373,14 @@
           "El backend ya lo tiene encargado: se investiga en las cartas oficiales de los locales " +
           "registrados (cada 2 h, primero lo más buscado) y aparecerá aquí con fuente, fecha y canal. " +
           "Si ningún local registrado lo sirve, queda pendiente de ampliar el registro de locales.</div>";
-      } else {
+      } else if (liveState === "offline") {
         html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» todavía no está en la base.</strong> ' +
           "Queda encargado: se investiga en fuentes oficiales (carta web, PDF de carta, pedido online) " +
           "y se añade con fuente, fecha y canal. La API no responde ahora mismo, así que el encargo " +
           "se registra en este navegador y se reintentará en vivo al volver la conexión.</div>";
+      } else {
+        html += '<div class="encargo"><strong>«' + esc(currentMiss.trim()) + '» no está en la base todavía.</strong> ' +
+          (liveCorrection ? "Quizás quisiste decir «" + esc(liveCorrection) + "»." : "Revisa la escritura o prueba con otro plato.") + "</div>";
       }
     }
     if (items.length) {
@@ -421,7 +451,7 @@
   // primero). Solo cuentan las respuestas de la busqueda actual.
   function fetchLive(q, fit) {
     var nq = norm(q).trim();
-    if (nq.length < 3) { liveRows = null; liveQuery = null; liveState = "local"; return; }
+    if (nq.length < 3) { liveRows = null; liveQuery = null; liveState = "local"; liveCorrection = null; return; }
     var seq = ++liveSeq;
     var ctl = new AbortController();
     var to = setTimeout(function () { ctl.abort(); }, 5000);
@@ -433,6 +463,7 @@
         if (!j.ok) throw new Error("api");
         liveRows = (j.results || []).concat(j.venue_matches || []);
         liveQuery = nq; liveState = j.queued ? "queued" : "ok";
+        liveCorrection = j.correction || null;
         lastSearchCenter = { lat: ref.lat, lon: ref.lon };
         render();
         if (fit !== false) fitMapToRows(flatDishes());

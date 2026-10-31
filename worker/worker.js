@@ -192,7 +192,7 @@ async function handleSearch(env, url){
       has_dishes: !!dishCountByVenue[v.id] }));
   venueMatches.sort((a,b) => a.km - b.km);
   venueMatches = venueMatches.slice(0, 25);
-  return json({ ok:true, results: cut, venue_matches: venueMatches, queued });
+  return json({ ok:true, results: cut, venue_matches: venueMatches, queued, correction: conocido ? conocido.term : null });
 }
 
 async function handleSuggest(env, url){

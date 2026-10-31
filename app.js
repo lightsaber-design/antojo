@@ -46,6 +46,14 @@
   // de Dublin), todo sin recargar la pagina.
   var mapMoveTimer = null;        // debounce del auto-search al mover el mapa
   var suppressMapMove = false;    // los movimientos programados (fitBounds/flyTo) no disparan busqueda
+  // El flag se suelta solo a los 1,5 s: si el movimiento programado no llega
+  // a mover el mapa no hay moveend y el flag podia quedarse "pegado" y
+  // tragarse el primer arrastre del usuario (fallo visto el 31 oct 2026).
+  function programarMovimiento(fn) {
+    suppressMapMove = true;
+    fn();
+    setTimeout(function () { suppressMapMove = false; }, 1500);
+  }
   var lastSearchCenter = null;    // para no rebuscar si el centro apenas se movio
 
   function norm(s) {
@@ -599,15 +607,16 @@
     pts.push([ref.lon, ref.lat]);
     if (pts.length > 1) {
       var bounds = pts.reduce(function (b, p) { return b.extend(p); }, new maplibregl.LngLatBounds(pts[0], pts[0]));
-      suppressMapMove = true;
-      map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 400 });
+      programarMovimiento(function () {
+        map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 400 });
+      });
     }
   }
 
   function setRef(lat, lon, label) {
     ref = { lat: lat, lon: lon, label: label };
     render();
-    if (map) { suppressMapMove = true; map.flyTo({ center: [lon, lat], zoom: 14 }); }
+    if (map) { programarMovimiento(function () { map.flyTo({ center: [lon, lat], zoom: 14 }); }); }
   }
 
   document.addEventListener("DOMContentLoaded", function () {

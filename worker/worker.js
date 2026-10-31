@@ -348,6 +348,42 @@ async function revalidateBatch(env, limit){
   return { checked: stale.length, updated, unchanged: kept };
 }
 
+
+// Google Places (New): investigación de locales bajo demanda (no automática;
+// cada llamada se factura por solicitud, así que solo corre vía POST con clave).
+async function handlePlaces(env, url){
+  if (!env.GOOGLE_PLACES_API_KEY)
+    return json({ ok:false, error: "GOOGLE_PLACES_API_KEY no configurada en el worker" }, 501);
+  const q = (url.searchParams.get("q") || "").trim();
+  if (!q) return json({ ok:false, error: "falta q (texto a buscar, p. ej. «Musashi Blanchardstown»)" }, 400);
+  const body = {
+    textQuery: q,
+    maxResultCount: 5,
+    languageCode: "es",
+    locationBias: { circle: { center: { latitude: 53.3881, longitude: -6.3756 }, radius: 10000.0 } }
+  };
+  const res = await fetch("https://places.googleapis.com/v1/places:searchText", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": env.GOOGLE_PLACES_API_KEY,
+      "X-Goog-FieldMask": "places.id,places.displayName,places.formattedAddress,places.location,places.rating,places.userRatingCount,places.websiteUri,places.googleMapsUri,places.nationalPhoneNumber,places.businessStatus"
+    },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok)
+    return json({ ok:false, error: `places ${res.status}: ${data.error?.message || "error"}`, detail: data.error || null }, 502);
+  const places = (data.places || []).map(p => ({
+    id: p.id, nombre: p.displayName?.text || null, direccion: p.formattedAddress || null,
+    lat: p.location?.latitude ?? null, lon: p.location?.longitude ?? null,
+    rating: p.rating ?? null, votos: p.userRatingCount ?? null,
+    web: p.websiteUri || null, maps: p.googleMapsUri || null,
+    tel: p.nationalPhoneNumber || null, estado: p.businessStatus || null
+  }));
+  return json({ ok:true, q, fuente: "Google Places API (New), clave antojo-places-01 (proyecto macd-infra)", ts: new Date().toISOString(), places });
+}
+
 export default {
   async fetch(request, env){
     const url = new URL(request.url);
@@ -363,9 +399,14 @@ export default {
         const rep = await collectBatch(env, parseInt(url.searchParams.get("n") || "3", 10));
         return json({ ok:true, report: rep });
       }
+      if (url.pathname === "/api/places" && request.method === "POST") {
+        if (!env.COLLECT_KEY || request.headers.get("x-antojo-key") !== env.COLLECT_KEY)
+          return json({ ok:false, error: "no autorizado" }, 401);
+        return await handlePlaces(env, url);
+      }
       if (url.pathname === "/" || url.pathname === "/api") {
         return json({ ok:true, service: "antojo-api", fase: 1,
-          endpoints: ["/api/search?q=", "/api/suggest?q=", "/api/stats", "/api/queue"] });
+          endpoints: ["/api/search?q=", "/api/suggest?q=", "/api/stats", "/api/queue", "POST /api/collect", "POST /api/places?q="] });
       }
       return json({ ok:false, error: "ruta desconocida" }, 404);
     } catch (e) {

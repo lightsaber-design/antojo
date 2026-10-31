@@ -76,7 +76,8 @@ function esTipoDe(a, b){
 function wordMatch(hay, term){
   const words = hay.split(/[^a-z0-9ñ]+/).filter(Boolean);
   return words.some(w => w === term || w === term + "s" || (w.length > 3 && w + "s" === term) ||
-    (term.length >= 5 && w.length >= 3 && (w.startsWith(term) || term.startsWith(w))));
+    (term.length >= 5 && w.startsWith(term)) ||
+    (term.length >= 6 && w.length >= term.length - 1 && term.startsWith(w)));
 }
 // Un plato coincide SOLO por su nombre (con sinonimos), nunca por la
 // categoria del local: "sushi" devuelve sushi/maki/nigiri/rolls, no ramen.

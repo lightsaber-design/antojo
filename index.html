@@ -30,6 +30,7 @@
 
 <main>
   <section class="controls">
+    <label for="q" class="search-label">Busca un plato</label>
     <input id="q" type="search" placeholder="¿Qué se te antoja? Ej.: sushi, ramen, hamburguesa, pancakes…" autocomplete="off">
     <ul id="suggest" class="suggest" hidden></ul>
     <div id="encargos"></div>
@@ -56,18 +57,20 @@
   <div id="map"></div>
 
   <div id="compare" class="compare" hidden></div>
-  <p id="count" class="count"></p>
-  <section id="results"></section>
+  <p id="count" class="count" role="status" aria-live="polite" aria-atomic="true"></p>
+  <section id="results" aria-label="Platos encontrados"></section>
 </main>
 
 <footer>
   <p>Antojo · piloto Dublín · base: <a href="https://github.com/lightsaber-design/antojo">lightsaber-design/antojo</a></p>
   <p>Mapa © OpenStreetMap contributors · Valoraciones: Yelp · Cada precio verificado lleva su fuente y fecha; se revalida a los 90 días.</p>
+  <p>Las distancias son en línea recta. Las búsquedas se registran sin datos personales para priorizar qué cartas se revalidan; Antojo nunca compra ni reserva por ti.</p>
   <p>Comparación del mismo plato en mapa inspirada en cheapotle · histórico y refresco inspirados en PriceBite (solo ideas, sin código) · metodología de extracción de cartas adaptada de amsterdam-menus (MIT). Atribuciones: NOTICE.md en el repo.</p>
 </footer>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="data.js?v=13"></script>
-<script src="app.js?v=13"></script>
+<script src="price-rules.js?v=14"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>

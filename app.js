@@ -25,6 +25,12 @@
   var markers = [];
   var map = null;
   var searchTimer = null;
+  var renderTimer = null;
+  var reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  function renderSoon() {
+    if (renderTimer) clearTimeout(renderTimer);
+    renderTimer = setTimeout(render, 120);
+  }
   // Backend Fase 1 (Worker + D1): la demo consulta primero la base propia en
   // vivo; si la API no responde, cae a los datos locales (data.js) y lo dice.
   var API_BASE = "https://antojo-api.caroldenissetorres.workers.dev";
@@ -81,7 +87,11 @@
     var d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + dias));
     return d.getUTCFullYear() + "-" + ("0" + (d.getUTCMonth() + 1)).slice(-2) + "-" + ("0" + d.getUTCDate()).slice(-2);
   }
+  // Reglas de precio compartidas navegador/CLI (price-rules.js, propuesta de
+  // Marco portada 31 oct 2026): rechazan fechas imposibles/futuras, precios
+  // invalidos, fuentes no-HTTPS y canales desconocidos. Dia 90 valido, 91 no.
   function diasDesde(iso) {
+    if (typeof AntojoPriceRules !== "undefined") return AntojoPriceRules.ageDays(iso);
     var p = iso.split("-");
     var ahora = new Date();
     var hoy = Date.UTC(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
@@ -89,11 +99,18 @@
   }
   // Estado de frescura: "none" (sin precio), "fresh", "soon" (quedan <=15 dias), "stale" (>90 dias).
   function freshState(d) {
+    if (typeof AntojoPriceRules !== "undefined") return AntojoPriceRules.state(d, FRESH, SOON_DAYS);
     if (d.price == null || !d.chk) return "none";
     var dias = diasDesde(d.chk);
     if (dias > FRESH) return "stale";
     if (dias >= FRESH - SOON_DAYS) return "soon";
     return "fresh";
+  }
+  // Precio utilizable: vigente (fresh/soon) y valido; los obsoletos se ven
+  // pero no ordenan ni entran en la comparacion (PR de Marco).
+  function currentPrice(d) {
+    var st = freshState(d);
+    return st === "fresh" || st === "soon";
   }
 
   var CANALES = {
@@ -292,9 +309,10 @@
     var cmp;
     if (sortBy === "precio") cmp = function (a, b) {
       var ap = precioDe(a), bp = precioDe(b);
-      if (ap == null && bp == null) return a.km - b.km;
-      if (ap == null) return 1;
-      if (bp == null) return -1;
+      var ca = a.dish && currentPrice(a.dish), cb = b.dish && currentPrice(b.dish);
+      if (!ca && !cb) return a.km - b.km;
+      if (!ca) return 1;
+      if (!cb) return -1;
       return ap - bp;
     };
     else if (sortBy === "valoracion") cmp = function (a, b) { return (b.venue.rating || 0) - (a.venue.rating || 0); };
@@ -312,7 +330,7 @@
     if (q.length < 2) return null;
     // Solo platos cuyo NOMBRE coincide con la busqueda (no locales que coinciden por nombre).
     var priced = rows.filter(function (x) {
-      return x.dish && x.dish.price != null && freshState(x.dish) !== "stale" && norm(x.dish.name).indexOf(q) >= 0;
+      return x.dish && currentPrice(x.dish) && norm(x.dish.name).indexOf(q) >= 0;
     });
     var byVenue = {};
     priced.forEach(function (x) {
@@ -329,9 +347,10 @@
     if (!comp) { el.hidden = true; el.innerHTML = ""; return; }
     el.hidden = false;
     el.innerHTML = '<strong>«' + esc(query.trim()) + '»</strong>: ' + fmtEur(comp.min.dish.price) + ' – ' +
-      fmtEur(comp.max.dish.price) + ' en ' + comp.venues.length + ' locales · el más barato: <strong>' +
+      fmtEur(comp.max.dish.price) + ' en ' + comp.venues.length + ' locales · menor precio encontrado: <strong>' +
       esc(comp.min.venue.name) + '</strong> (' + fmtEur(comp.min.dish.price) + ', a ' + fmtKm(comp.min.km) +
-      ') · el mapa colorea cada local por precio';
+      ') · opciones distintas: pueden variar plato, ración y canal; no es una comparación equivalente · ' +
+      'el mapa colorea cada local por precio';
   }
   // Escala verde (mas barato) -> rojo (mas caro) para los marcadores del mapa.
   function priceColor(t) {
@@ -442,8 +461,12 @@
     if (!items.length) { el.hidden = true; return; }
     items.forEach(function (txt) {
       var li = document.createElement("li");
-      li.textContent = txt;
-      li.addEventListener("mousedown", function (ev) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.textContent = txt;
+      li.appendChild(button);
+      button.addEventListener("mousedown", function (ev) { ev.preventDefault(); });
+      button.addEventListener("click", function (ev) {
         ev.preventDefault();
         document.getElementById("q").value = txt;
         query = txt;
@@ -540,7 +563,7 @@
         // "carta pendiente" y el backend la investiga (cola + cron).
         card.className = "card venue-only";
         card.innerHTML =
-          '<div class="dish">🍽 ' + esc(x.venue.name) + "</div>" +
+          '<h3 class="dish">🍽 ' + esc(x.venue.name) + "</h3>" +
           '<div class="venue">' + esc(x.venue.address || "Dublín") + "</div>" +
           '<div class="meta">' +
             "<span>📍 " + fmtKm(x.km) + "</span>" +
@@ -564,7 +587,7 @@
         precioHtml = '<span class="price">' + fmtEur(x.dish.price) + "</span>";
       }
       card.innerHTML =
-        '<div class="dish">' + esc(x.dish.name) + " " + precioHtml + "</div>" +
+        '<h3 class="dish">' + esc(x.dish.name) + " " + precioHtml + "</h3>" +
         '<div class="venue">' + esc(x.venue.name) + " · " + esc(x.venue.address) + "</div>" +
         '<div class="meta">' +
           "<span>📍 " + fmtKm(x.km) + "</span>" +
@@ -580,6 +603,7 @@
 
   function initMap() {
     if (typeof maplibregl === "undefined") { document.getElementById("map").style.display = "none"; return; }
+    // Si WebGL falla, el constructor lanza: lo coge el try/catch del arranque.
     map = new maplibregl.Map({
       container: "map",
       style: {
@@ -664,7 +688,7 @@
     if (pts.length > 1) {
       var bounds = pts.reduce(function (b, p) { return b.extend(p); }, new maplibregl.LngLatBounds(pts[0], pts[0]));
       programarMovimiento(function () {
-        map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: 400 });
+        map.fitBounds(bounds, { padding: 60, maxZoom: 15, duration: reducedMotion ? 0 : 400 });
       });
     }
   }
@@ -672,11 +696,18 @@
   function setRef(lat, lon, label) {
     ref = { lat: lat, lon: lon, label: label };
     render();
-    if (map) { programarMovimiento(function () { map.flyTo({ center: [lon, lat], zoom: 14 }); }); }
+    if (map) { programarMovimiento(function () { map.flyTo({ center: [lon, lat], zoom: 14, animate: !reducedMotion }); }); }
   }
 
   document.addEventListener("DOMContentLoaded", function () {
-    initMap();
+    render();
+    try {
+      initMap();
+    } catch (e) {
+      map = null;
+      var mapEl = document.getElementById("map");
+      if (mapEl) mapEl.style.display = "none";
+    }
     render();
     fitMapToRows(flatDishes());
     renderTopSearches();
@@ -684,7 +715,7 @@
     var qInput = document.getElementById("q");
     qInput.addEventListener("input", function (e) {
       query = e.target.value.trim();
-      render();
+      renderSoon();
       renderSuggest();
       if (searchTimer) clearTimeout(searchTimer);
       searchTimer = setTimeout(function () {
@@ -706,6 +737,11 @@
       }, 150);
     });
     qInput.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") {
+        var sug = document.getElementById("suggest");
+        if (sug) sug.hidden = true;
+        return;
+      }
       if (e.key === "Enter") {
         var el = document.getElementById("suggest");
         if (el && !el.hidden && el.firstChild) {
@@ -742,9 +778,9 @@
       categories.map(function (c) { return c.dcat; })
         .filter(function (k) { return CAT_FIJAS.indexOf(k) < 0 && presentes[k].n >= 2; }));
     orden = orden.slice(0, 12);
-    var html = '<button class="chip on" data-cat="todo">Todo</button>';
+    var html = '<button class="chip on" aria-pressed="true" data-cat="todo">Todo</button>';
     orden.forEach(function (k) {
-      html += '<button class="chip" data-cat="' + k + '">' + (CAT_EMOJI[k] || "🍽️") + " " +
+      html += '<button class="chip" aria-pressed="false" data-cat="' + k + '">' + (CAT_EMOJI[k] || "🍽️") + " " +
         esc(CAT_LABEL[k] || (k[0].toUpperCase() + k.slice(1))) + "</button>";
     });
     cont.innerHTML = html;
@@ -753,8 +789,9 @@
   function bindChips() {
     Array.prototype.forEach.call(document.querySelectorAll(".chip:not(.small)"), function (chip) {
       chip.addEventListener("click", function () {
-        Array.prototype.forEach.call(document.querySelectorAll(".chip:not(.small)"), function (c) { c.classList.remove("on"); });
+        Array.prototype.forEach.call(document.querySelectorAll(".chip:not(.small)"), function (c) { c.classList.remove("on"); c.setAttribute("aria-pressed", "false"); });
         chip.classList.add("on");
+        chip.setAttribute("aria-pressed", "true");
         var cat = chip.getAttribute("data-cat");
         query = (cat === "todo") ? "" : cat;
         document.getElementById("q").value = query;

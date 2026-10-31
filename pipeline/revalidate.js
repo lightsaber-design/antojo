@@ -24,6 +24,7 @@
 "use strict";
 const fs = require("fs");
 const path = require("path");
+const rules = require("../price-rules.js");
 
 const args = process.argv.slice(2);
 let dataPath = path.join(__dirname, "..", "data.js");
@@ -70,12 +71,11 @@ const rows = [];
 for (const v of VENUES) {
   for (const d of v.dishes) {
     const hits = searchScore(d.name);
-    if (d.price == null || !d.chk) {
+    if (rules.state(d, FRESH, 15, ahora) === "none") {
       rows.push({ venue: v.name, dish: d.name, price: null, chk: d.chk || "-", days: null, estado: "pendiente", hits });
       continue;
     }
-    const p = d.chk.split("-");
-    const days = Math.floor((hoy - Date.UTC(+p[0], +p[1] - 1, +p[2])) / 86400000);
+    const days = rules.ageDays(d.chk, ahora);
     const estado = days > FRESH ? "OBSOLETO" : (days >= FRESH - 15 ? "revalidar pronto" : "fresco");
     rows.push({ venue: v.name, dish: d.name, price: d.price, chk: d.chk, days, estado, hits });
   }
